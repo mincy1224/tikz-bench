@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "提示：tikz-edit 已更名为 tikz-bench。" >&2
+exec /usr/local/bin/tikz-bench "$@"

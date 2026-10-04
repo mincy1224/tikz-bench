@@ -1,0 +1,29 @@
+[Unit]
+Description=TikZ Editor local web service
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=tikz-editor
+WorkingDirectory=/opt/tikz-editor
+Environment=HOME=/var/lib/tikz-editor
+EnvironmentFile=-/etc/default/tikz-editor
+ExecStart=/usr/bin/node /opt/tikz-editor/apps/server/dist/index.js
+Restart=on-failure
+RestartSec=2
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=1G
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

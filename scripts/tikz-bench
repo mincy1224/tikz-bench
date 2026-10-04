@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  start) sudo systemctl start tikz-bench.service; echo "TikZ Bench 已启动。" ;;
+  status) systemctl status tikz-bench.service --no-pager ;;
+  stop) sudo systemctl stop tikz-bench.service; echo "TikZ Bench 已停止。" ;;
+  restart) sudo systemctl restart tikz-bench.service; echo "TikZ Bench 已重新启动。" ;;
+  logs) journalctl -u tikz-bench.service -n 100 --no-pager ;;
+  backup)
+    destination="${2:-$PWD/tikz-bench-backup-$(date +%Y%m%d-%H%M%S).sqlite}"
+    sudo systemctl stop tikz-bench.service
+    sudo sqlite3 /var/lib/tikz-bench/tikz-bench.sqlite ".backup '$destination'"
+    sudo chown "$(id -u):$(id -g)" "$destination"
+    sudo systemctl start tikz-bench.service
+    echo "数据库已备份到：$destination"
+    ;;
+  *) echo "用法：tikz-bench {start|status|stop|restart|logs|backup [文件]}" >&2; exit 2 ;;
+esac
