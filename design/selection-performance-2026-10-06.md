@@ -38,3 +38,18 @@ cd ~/tikz-bench && git pull --ff-only && nvm use 22 && bash install.sh
 
 No new database path is needed for this performance fix. The installer preserves
 the configured database and existing TeX Live.
+
+## Anchored connector selection follow-up
+
+Named arrow endpoints were classified as unsupported direct coordinate writes,
+blocking a multi-selection containing both nodes and their connectors. The
+selection capability and move planner now share an owner-dependency query:
+endpoints whose owners move with the selection retain their named references
+and move through those owners. Direct endpoints are still rewritten normally;
+an endpoint bound to an unselected owner is not silently detached.
+
+The supplied full diagram is retained in `test/fixtures/anchored-left-diagram.tex`.
+Its eleven left-side objects, including three scopes and two anchored arrows,
+translate together while the right side stays unchanged. Eighty-eight related
+unit tests passed, along with a production-browser drag, keyboard movement and
+undo test. Typecheck, production lint and the production web build passed.

@@ -20,6 +20,7 @@ import {
 } from "./geometry";
 import { boundsFromPoints } from "./interaction-helpers";
 import { computeDragCapability } from "./drag-capability";
+import { followingAnchorHandleIds } from "tikz-editor/edit/anchored-selection";
 import { deriveCurveControlLines } from "./curve-controls";
 import { buildHitRegions, type HitRegion } from "./hit-regions";
 import { resolveResizeFrameForSource } from "./resize-frames";
@@ -270,6 +271,16 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
 
   const draggableSourceIds = useMemo(() => {
     const ids = new Set<string>(dragCapability.draggableSourceIds);
+    const following = followingAnchorHandleIds(snapshot.parseResult?.figure.body ?? [], snapshot.editHandles, selectedElementIds);
+    const bySource = new Map<string, EditHandle[]>();
+    for (const handle of snapshot.editHandles) {
+      const sourceId = handle.sourceRef.sourceId;
+      const handles = bySource.get(sourceId) ?? [];
+      handles.push(handle); bySource.set(sourceId, handles);
+    }
+    for (const [sourceId, handles] of bySource) {
+      if (handles.every((handle) => dragCapability.draggableHandleIds.has(handle.id) && handle.rewriteMode !== "unsupported" || following.has(handle.id))) ids.add(sourceId);
+    }
     for (const fitId of fitNodeSourceIds) {
       ids.delete(fitId);
     }
@@ -295,7 +306,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       ids.add(nodeId);
     }
     return ids;
-  }, [adornmentTargetIds, dragCapability.draggableSourceIds, fitNodeSourceIds, matrixCellSourceIds, matrixSourceIds, movableScopeSourceIds, pathAttachedNodeSourceIds, treeChildSourceIds, treeRootSourceIds]);
+  }, [adornmentTargetIds, dragCapability.draggableSourceIds, dragCapability.draggableHandleIds, fitNodeSourceIds, matrixCellSourceIds, matrixSourceIds, movableScopeSourceIds, pathAttachedNodeSourceIds, treeChildSourceIds, treeRootSourceIds, snapshot.parseResult, snapshot.editHandles, selectedElementIds]);
 
   const selectionBounds = useMemo<SelectionBounds[]>(() => {
     const selected: SelectionBounds[] = [];

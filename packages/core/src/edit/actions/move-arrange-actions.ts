@@ -1,4 +1,5 @@
 import type { EditActionResultLike } from "../result-types.js";
+import { followingAnchorHandleIds } from "../anchored-selection.js";
 import type { CoordinateItem, NodeItem, PathItem, PathStatement, Span, Statement } from "../../ast/types.js";
 import { pt } from "../../coords/scalars.js";
 import type { OptionEntry } from "../../options/types.js";
@@ -90,6 +91,7 @@ export function applyMoveElementsAction(
     (elementId) => !matrixElementIdSet.has(elementId) && !scopeElementIdSet.has(elementId) && !treeRootElementIdSet.has(elementId)
   );
   const scopeElementIds = normalizedIds.filter((elementId) => scopeElementIdSet.has(elementId));
+  const followingHandles = followingAnchorHandleIds(parsed.figure.body, editHandles, new Set(normalizedIds));
 
   const matrixPlacementHandlesBySource = new Map<string, EditHandle>();
   for (const handle of editHandles) {
@@ -109,7 +111,7 @@ export function applyMoveElementsAction(
   const movedPathShapeDeltas = new Map<string, WorldPoint>();
 
   if (nonMatrixElementIds.length > 0) {
-    const byHandles = applyMoveElementsUsingHandleRewrites(currentSource, editHandles, nonMatrixElementIds, delta, parseOptions);
+    const byHandles = applyMoveElementsUsingHandleRewrites(currentSource, editHandles, nonMatrixElementIds, delta, parseOptions, followingHandles);
     if (byHandles.kind === "error") {
       return byHandles;
     }
@@ -273,7 +275,8 @@ function applyMoveElementsUsingHandleRewrites(
   editHandles: EditHandle[],
   elementIds: readonly string[],
   delta: WorldPoint,
-  parseOptions: EditParseOptions = {}
+  parseOptions: EditParseOptions = {},
+  followingHandles: ReadonlySet<string> = new Set()
 ): EditActionResultLike {
   const sourceIdSet = new Set(elementIds);
   const elementHandles = editHandles.filter((handle) => sourceIdSet.has(handle.sourceRef.sourceId));
@@ -282,12 +285,13 @@ function applyMoveElementsUsingHandleRewrites(
     return { kind: "unsupported", reason: "No handles found for the selected element(s)" };
   }
 
-  const rewritable = elementHandles.filter((handle) => handle.rewriteMode !== "unsupported");
+  const rewritable = elementHandles.filter((handle) => handle.rewriteMode !== "unsupported" && !followingHandles.has(handle.id));
   const skippedHandles = elementHandles
-    .filter((handle) => handle.rewriteMode === "unsupported")
+    .filter((handle) => handle.rewriteMode === "unsupported" && !followingHandles.has(handle.id))
     .map((handle) => handle.id);
 
   if (rewritable.length === 0) {
+    if (elementHandles.every((handle) => followingHandles.has(handle.id))) return { kind: "success", newSource: source, patches: [] };
     return {
       kind: "unsupported",
       reason: "All handles for the selected element(s) use unsupported coordinate forms"
