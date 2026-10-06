@@ -25,7 +25,7 @@ TikZ Bench 基于 **Dominik Peters** 的 [TikZ Editor](https://github.com/Domini
 bash install.sh
 ```
 
-无需手工构建或打包。脚本通过 apt 补齐缺失的非 TeX 工具，执行 `npm ci`、构建前端和服务端，在服务隔离环境下检查编译，然后安装 `tikz-bench` 系统命令和 systemd 服务。构建需要 Node.js 18.19+ 和 npm（推荐 Node.js 22+）；已有 Node.js 版本过低时需先更新。
+无需手工构建或打包。脚本通过 apt 补齐缺失的非 TeX 工具，执行 `npm ci`、构建前端和服务端，在服务隔离环境下检查编译，然后安装 `tikz-bench` 系统命令和 systemd 服务。构建需要 Node.js 22.13+ 和 npm 10.5+；已有 Node.js 版本过低时需先更新。
 
 现有 TeX 需要提供 `latex`、`xelatex`、`dvisvgm`、`dvipdfmx` 和 `kpsewhich`，包含 TikZ、standalone、Forest、PGFPlots、Circuitikz、ctex、fontspec 和 Fandol 字体。中文系统字体缺失时通过 apt 补齐。也可以显式指定 TeX 路径：
 
@@ -37,7 +37,7 @@ TIKZ_TEX_BIN_DIR=/usr/local/texlive/2026/bin/x86_64-linux bash install.sh
 
 ## 使用与升级
 
-新建项目，输入 TikZ 代码或从工具栏添加图形，选中对象后在右栏修改格式。项目自动保存；高级代码使用 **LaTeX 编译预览**。
+新建项目，输入 TikZ 代码或从工具栏添加图形，选中对象后在右栏修改格式。项目自动保存；高级代码高级环境自动在主画布编译，也可使用 **LaTeX 编译预览**。
 
 ```bash
 tikz-bench start
@@ -57,10 +57,37 @@ tikz-bench rollback
 
 ## 开发
 
-使用 Node.js 22+ 和 npm，在项目根目录运行 `npm ci`，再运行 `npm run dev:full`。仅构建生产版本、不安装服务时，依次运行 `npm run build` 和 `npm run build:full`。系统安装需要 Linux；开发构建也可以在 Windows 上运行。
+使用 Node.js 22.13+ 和 npm 10.5+，在项目根目录运行 `npm ci`，再运行 `npm run dev:full`。仅构建生产版本、不安装服务时，依次运行 `npm run build` 和 `npm run build:full`。系统安装需要 Linux；开发构建也可以在 Windows 上运行。
 
 更多说明见[服务端配置](apps/server/README.md)与[源码安装说明](design/build-and-upgrade.md)。
 
 ## 许可证
 
 采用 MIT 许可证；[LICENSE](LICENSE) 保留原作者的版权及许可声明。[NOTICE.md](NOTICE.md) 说明项目来源与修改内容。TikZ Bench 独立维护，这些修改不代表原作者认可或参与维护。打包的第三方组件保留各自的许可证。
+
+## 本次重构的安装与验证
+
+右栏按“图形／文字”组织；拖动显示边缘、中心及等间距辅助线。格式刷持续开启，仅刷同类型组件的颜色、字号和线宽，再点按钮退出。新建项目先填写唯一名称和可选描述，取消不会创建记录。
+
+Forest、PGFPlots 和 Circuitikz 自动在主画布编译，已支持的对象通过源码映射选中编辑。任意自定义宏内部及 groupplot 的反向映射不支持；真实 TeX Live 2026 映射验收仍需目标环境验证。
+
+本次不迁移旧库，也不删除旧库。推送更新后，在 Ubuntu 源码目录执行：
+
+```bash
+cd ~/tikz-bench &&
+git pull --ff-only &&
+nvm use 22 &&
+bash install.sh --database /var/lib/tikz-bench/tikz-bench-v2.sqlite &&
+tikz-bench start &&
+tikz-bench version &&
+tikz-bench status
+```
+
+`--database` 使用 systemd 可写目录 `/var/lib/tikz-bench/` 内的绝对 `.sqlite` 路径。之后升级继续使用同一路径。健康检查和日志：
+
+```bash
+curl -fsS http://127.0.0.1:5173/api/health
+tikz-bench logs
+```
+
+在源码目录且已有 TeX 工具位于 PATH 时，执行 `node --import tsx scripts/verify-editable-tex.mts`，验证三类高级组件的真实映射和 PDF 导出。安装器复用现有 TeX Live，不替换它。

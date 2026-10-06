@@ -89,6 +89,9 @@ export const FEATURE_IDS = [
   "svg_path",
   "svg_circle",
   "svg_text",
+  "advanced_forest_source",
+  "advanced_pgfplots_source",
+  "advanced_circuitikz_source",
   "render_pipeline"
 ] as const;
 

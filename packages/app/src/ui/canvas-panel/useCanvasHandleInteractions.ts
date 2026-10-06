@@ -1,3 +1,4 @@
+import { SourceEditTransaction } from "../../store/source-edit-transaction";
 import { useCallback, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { clientPoint as makeClientPoint, px } from "tikz-editor/coords/index";
 import {
@@ -325,6 +326,7 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
       setSnapLines([]);
       setDragState({
         kind: "resize",
+        transaction: new SourceEditTransaction("调整尺寸"),
         pointerId: event.pointerId,
         elementId: sourceId,
         role: normalizedRole,

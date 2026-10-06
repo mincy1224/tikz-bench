@@ -1,3 +1,4 @@
+import { isSemanticScope } from "tikz-editor/edit/actions/group-ungroup-actions";
 import type { NodeItem, PathStatement, ScopeStatement, Statement } from "tikz-editor/ast/types";
 import type { EditAnalysisView } from "tikz-editor/edit/analysis";
 import { resolveFigureBoundsState } from "tikz-editor/edit/figure-bounds";
@@ -52,10 +53,16 @@ export function buildObjectsPanelModel(args: {
   });
   const boundingBoxSourceId = figureBoundsState.mode === "fixed" ? figureBoundsState.sourceId : null;
   const nodes = analysisView.parseResult.figure.body
-    .map((statement) => buildNode(statement, analysisView, sceneElementsBySourceId, selectedIds, byId, boundingBoxSourceId))
-    .filter((node): node is ObjectsPanelNode => node != null);
+    .flatMap((statement) => buildVisibleNodes(statement, analysisView, sceneElementsBySourceId, selectedIds, byId, boundingBoxSourceId));
 
   return { nodes, byId };
+}
+
+function buildVisibleNodes(...args: Parameters<typeof buildNode>): ObjectsPanelNode[] {
+  const [statement, analysis, scene, selected, byId, bounds] = args;
+  if (statement.kind === "Scope" && isSemanticScope(statement)) return statement.body.flatMap((child) => buildVisibleNodes(child, analysis, scene, selected, byId, bounds));
+  const node = buildNode(...args);
+  return node ? [node] : [];
 }
 
 function buildNode(
@@ -72,8 +79,7 @@ function buildNode(
 
   const children = statement.kind === "Scope"
     ? statement.body
-        .map((child) => buildNode(child, analysisView, sceneElementsBySourceId, selectedIds, byId, boundingBoxSourceId))
-        .filter((node): node is ObjectsPanelNode => node != null)
+        .flatMap((child) => buildVisibleNodes(child, analysisView, sceneElementsBySourceId, selectedIds, byId, boundingBoxSourceId))
     : [];
   const ref = analysisView.statementSnapshot.byId.get(statement.id);
   if (!ref) {

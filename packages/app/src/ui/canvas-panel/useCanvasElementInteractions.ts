@@ -1,6 +1,11 @@
+import { parseTikzForEdit } from "tikz-editor/edit/parse-options";
+import { evaluateTikzFigure } from "tikz-editor/semantic/evaluate";
 import { useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { clientPoint, px, pt, worldBounds, worldVector } from "tikz-editor/coords/index";
 import { buildSnapContext, collectSelectionGeometryFromBounds, collectSourceWorldBounds, type SnapBounds, type SnapGuideInput, type SnapLine, type SnapSettingsPatch } from "tikz-editor/edit/snapping";
+import { collectArrangeWorldBounds } from "tikz-editor/edit/scope-bounds";
+import { SourceEditTransaction } from "../../store/source-edit-transaction";
+import { paintObject } from "../format-painter";
 import type { EditHandle, SceneElement } from "tikz-editor/semantic/types";
 import type { ClientPoint, WorldBounds, WorldPoint } from "../coords/types";
 import { resolveEligibleExplicitPath, type ExplicitPathAnalysis } from "tikz-editor/edit/path-editing";
@@ -160,6 +165,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       const snapContext = snapshot.scene
         ? buildSnapContext({
             sceneElements: snapshot.scene.elements,
+            referenceBounds: collectArrangeWorldBounds(snapshot.scene.elements, snapshot.parseResult?.figure.body ?? []),
             selectedSourceIds: snapExcludedSourceIds,
             guides: snapGuideInput,
             settings: snapSettingsPatch,
@@ -204,8 +210,12 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         : null;
       setSnapLines([]);
 
+      const transaction = new SourceEditTransaction("移动");
+      const baseline = parseTikzForEdit(transaction.base, { activeFigureId });
       setDragState({
         kind: "element",
+        transaction,
+        baselineHandles: evaluateTikzFigure(baseline.figure, transaction.base).editHandles,
         pointerId,
         elementIds: draggedIds,
         startWorld: world,
@@ -233,6 +243,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       });
     },
     [
+      activeFigureId,
       canvasTransform.scale,
       directManipulationDisabledReasonBySourceId,
       draggableSourceIds,
@@ -244,6 +255,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       snapGuideInput,
       snapSettingsPatch,
       snapshot.scene,
+      snapshot.parseResult?.figure.body,
       snapshot.source,
       source,
       viewportWorldBounds
@@ -404,6 +416,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       const additiveSelection = event.shiftKey || event.ctrlKey || event.metaKey;
       const clientPoint = clientPointFromEvent(event);
       const hitSourceId = typeof region?.sourceId === "string" ? region.sourceId : targetId;
+      if (paintObject(hitSourceId)) { event.preventDefault(); event.stopPropagation(); return; }
       const matrixEdgeSelection =
         region?.shape === "rect" && region.matrixEdgeSelection
           ? region.matrixEdgeSelection

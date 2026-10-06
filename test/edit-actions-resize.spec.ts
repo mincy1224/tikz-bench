@@ -1747,7 +1747,7 @@ describe("applyEditAction – resizeElement", () => {
     expect(result.reason).toContain("non-finite transform");
   });
 
-  it("rejects degenerate, rotated, and invalid-role scope resizes", () => {
+  it("resizes rotated scopes and rejects degenerate or invalid-role scope resizes", () => {
     const source = String.raw`\begin{tikzpicture}
   \begin{scope}[rotate=30]
     \draw (0,0) rectangle (2,1);
@@ -1760,9 +1760,14 @@ describe("applyEditAction – resizeElement", () => {
       role: "right",
       newWorld: wp(cm(3), 0)
     });
-    expect(rotated.kind).toBe("unsupported");
-    if (rotated.kind === "unsupported") {
-      expect(rotated.reason).toContain("non-rotated scopes");
+    expect(rotated.kind).toBe("success");
+    if (rotated.kind === "success") {
+      const before = scopeBodyBounds(source)!; const after = scopeBodyBounds(rotated.newSource)!;
+      expect(after.minX).toBeCloseTo(before.minX, 1);
+      expect(after.maxX).toBeCloseTo(cm(3), 1);
+      expect(after.maxY).toBeCloseTo(before.maxY, 1);
+      const ungrouped = applyEditAction(rotated.newSource, [], { kind: "ungroupElements", elementIds: ["scope:0"] });
+      expect(ungrouped.kind).toBe("success");
     }
 
     const degenerate = applyEditAction(source.replace("[rotate=30]", ""), [], {
@@ -1820,8 +1825,10 @@ describe("applyEditAction – resizeElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xscale=2");
-    expect(result.newSource).toContain("yscale=2");
+    const before = scopeBodyBounds(source)!; const after = scopeBodyBounds(result.newSource)!;
+    expect((after.maxX - after.minX) / (after.maxY - after.minY)).toBeCloseTo((before.maxX - before.minX) / (before.maxY - before.minY), 2);
+    expect(after.minX).toBeCloseTo(before.minX, 1);
+    expect(after.maxY).toBeCloseTo(before.maxY, 1);
   });
 
   it("falls back from diamond side-specific resize when minimum size is set", () => {

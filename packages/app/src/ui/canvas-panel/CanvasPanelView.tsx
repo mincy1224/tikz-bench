@@ -1,3 +1,4 @@
+import { useFormatPainter } from "../format-painter";
 import {
   useEffect,
   useState,
@@ -380,6 +381,7 @@ export function CanvasPanelView(props: CanvasPanelViewProps) {
     };
   }, [shouldBlinkTextCaret, textCaretBlinkKey]);
 
+  const painting = useFormatPainter((state) => Boolean(state.snapshot));
   return (
     <div className={css.panel}>
       <div className={[css.canvasGrid, showRulers ? "" : css.canvasGridNoRulers].filter(Boolean).join(" ")}>
@@ -464,6 +466,7 @@ export function CanvasPanelView(props: CanvasPanelViewProps) {
           ref={viewportRef}
           data-canvas-viewport="true"
           data-testid="canvas-viewport"
+          style={{ cursor: painting ? "copy" : undefined }}
           tabIndex={0}
           onKeyDown={onViewportKeyDown}
           onCopy={onViewportCopy}

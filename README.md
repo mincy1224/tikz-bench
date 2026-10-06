@@ -8,9 +8,10 @@ TikZ Bench is an independently maintained derivative of [TikZ Editor](https://gi
 
 ## Features
 
-- Shapes, paths, curves, text, groups and anchor connections.
+- Shapes, paths, curves, text, groups and anchor connections; edge, center and equal-spacing guides while dragging.
 - Multipart rectangles with horizontal or vertical sections, individual content and fills.
-- Font size, colors, line width and independently sized arrowheads; previews, undo/redo and multi-selection editing.
+- A shape/text format panel, exact font sizes, colors, line widths, independently sized arrowheads and multi-selection editing.
+- A persistent format painter for matching component types; each gesture is one undo step.
 - Local projects with automatic saving; TeX, SVG, PNG and PDF export.
 - Same-origin MathJax formulas and local LaTeX / Chinese XeLaTeX compilation.
 - Example matrices, flowcharts, plots and circuits. Advanced Forest, PGFPlots and Circuitikz code uses local TeX compilation; direct canvas editing depends on supported syntax.
@@ -25,7 +26,7 @@ After cloning **this repository**, run from its root:
 bash install.sh
 ```
 
-No separate build or packaging step is needed. The script installs missing non-TeX tools through apt, runs `npm ci`, builds the frontend and server, checks compilation under service isolation, and installs the `tikz-bench` command and systemd service. Node.js 18.19+ and npm are needed for building (Node.js 22+ recommended); an existing older Node.js must be updated first.
+No separate build or packaging step is needed. The script installs missing non-TeX tools through apt, runs `npm ci`, builds the frontend and server, checks compilation under service isolation, and installs the `tikz-bench` command and systemd service. Node.js 22.13+ and npm 10.5+ are required for building; an existing older Node.js must be updated first.
 
 TeX must provide `latex`, `xelatex`, `dvisvgm`, `dvipdfmx` and `kpsewhich`, with TikZ, standalone, Forest, PGFPlots, Circuitikz, ctex, fontspec and Fandol fonts. Missing Chinese system fonts are installed through apt. To specify the existing TeX directory:
 
@@ -37,7 +38,7 @@ A fresh installation starts automatically. Open **http://localhost:5173**. Exist
 
 ## Use and upgrade
 
-Create a project, enter TikZ code or add shapes from the toolbar, then select objects to edit their formatting. Projects save automatically. Use **LaTeX compilation preview** for advanced code.
+Create a project with a required unique name and optional description, then enter TikZ code or add shapes from the toolbar. Select objects to edit the shape/text format panel. Projects save after committed edits. Supported Forest, PGFPlots and Circuitikz environments compile automatically on the main canvas; mapped objects expose source properties and supported data points can be dragged. Custom macro internals and groupplot mappings are not reverse editable. Real TeX mapping acceptance is pending; this is not a claim of arbitrary LaTeX editability.
 
 ```bash
 tikz-bench start
@@ -53,11 +54,25 @@ tikz-bench rollback
 
 To upgrade, run `git pull --ff-only` in your source checkout, then `bash install.sh` again. Alternatively, `tikz-bench upgrade /path/to/tikz-bench-source` builds and installs that checkout. `rollback` switches programs without replacing the database; backup restores the original running/stopped state.
 
+For this refactor, use a separate fresh database. Existing databases are kept; there is no schema migration:
+
+```bash
+cd ~/tikz-bench &&
+git pull --ff-only &&
+nvm use 22 &&
+bash install.sh --database /var/lib/tikz-bench/tikz-bench-v2.sqlite &&
+tikz-bench start &&
+tikz-bench version &&
+tikz-bench status
+```
+
+`--database` accepts an absolute `.sqlite` path inside `/var/lib/tikz-bench/`, the writable systemd state directory. Reuse the same path for later upgrades. Check `curl -fsS http://127.0.0.1:5173/api/health` and `tikz-bench logs`. With your TeX tools on PATH, run `node --import tsx scripts/verify-editable-tex.mts` from the source checkout to validate the actual Forest/plot/circuit mappings and PDF export.
+
 Programs: `/opt/tikz-bench/releases/`. Configuration: `/etc/default/tikz-bench`. Default database: `/var/lib/tikz-bench/tikz-bench.sqlite`. The service listens on `127.0.0.1:5173` by default.
 
 ## Development
 
-With Node.js 22+ and npm, run `npm ci` then `npm run dev:full` from the repository root. For a production build without installing a service, run `npm run build` followed by `npm run build:full`. System installation requires Linux; development builds can also run on Windows.
+With Node.js 22.13+ and npm 10.5+, run `npm ci` then `npm run dev:full` from the repository root. For a production build without installing a service, run `npm run build` followed by `npm run build:full`. System installation requires Linux; development builds can also run on Windows.
 
 See [server configuration](apps/server/README.md) and [source installation details](design/build-and-upgrade.md).
 

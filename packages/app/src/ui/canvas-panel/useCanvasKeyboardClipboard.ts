@@ -7,7 +7,6 @@ import {
 } from "react";
 import { pt, worldPoint } from "tikz-editor/coords/index";
 import { snapKeyboardNudge, type SnapLine } from "tikz-editor/edit/snapping";
-import type { EditAction } from "tikz-editor/edit/actions";
 import type { SceneElement } from "tikz-editor/semantic/types";
 import type { SvgViewBox } from "tikz-editor/svg/types";
 import type { EditorPlatform } from "../../platform/types";
@@ -34,6 +33,7 @@ import {
   findSvgFileInDataTransfer
 } from "../svg-import";
 import { selectNudgeAnchorHandle } from "./panel-helpers";
+import { useKeyboardNudge } from "./useKeyboardNudge";
 import type {
   ApplyActionWithFeedbackFn,
   CanvasContextMenuState,
@@ -149,7 +149,6 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
     closeTextEditingSession,
     setMarqueeDraft,
     selectedElementIds,
-    applyActionWithFeedback,
     snapshot,
     source,
     logSnapDebug,
@@ -162,6 +161,7 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
     DESKTOP_POWERPOINT_GVML_CLIPBOARD_FORMATS,
     computeAutoScaleForImportedTikz
   } = args;
+  const keyboardNudge = useKeyboardNudge(setWarning);
 
   const onViewportKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -182,6 +182,7 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
       }
 
       if (event.key === "Escape") {
+        if (keyboardNudge.cancel()) { event.preventDefault(); return; }
         if (toolMode === "addPath") {
           finalizePathDraft(false);
           setWarning(null);
@@ -289,7 +290,7 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
       const selectedIds = [...selectedElementIds];
       if (selectedIds.length === 0) return;
 
-      if (snapshot.source !== source) {
+      if (!event.repeat && snapshot.source !== source) {
         setWarning("Wait for recompute to finish before nudging again.");
         logSnapDebug({
           phase: "keyboard-nudge",
@@ -322,20 +323,7 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
           ? worldPoint(pt(direction * step), pt(0))
           : worldPoint(pt(0), pt(direction * step)));
 
-      const moveAction: EditAction =
-        selectedIds.length === 1
-          ? {
-              kind: "moveElement",
-              elementId: selectedIds[0],
-              delta
-            }
-          : {
-              kind: "moveElements",
-              elementIds: selectedIds,
-              delta
-            };
-
-      applyActionWithFeedback(moveAction);
+      keyboardNudge.nudge(event.key, delta.x, delta.y, selectedIds, snapshot.editHandles);
       setSnapLines(snapped.lines);
       logSnapDebug({
         phase: "keyboard-nudge",
@@ -350,9 +338,9 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
     },
     [
       NUDGE_STEP_PT,
+      keyboardNudge,
       NUDGE_STEP_SHIFT_PT,
-      applyActionWithFeedback,
-      contextMenuState,
+        contextMenuState,
       dispatch,
       dragRef,
       finalizePathDraft,

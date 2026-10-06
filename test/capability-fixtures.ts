@@ -1,4 +1,7 @@
 export const capabilityFixtures: Record<string, string> = {
+  advanced_forest: String.raw`\begin{forest}[A [B]]\end{forest}`,
+  advanced_plots: String.raw`\begin{tikzpicture}\begin{axis}\addplot coordinates {(1,2)(2,3)};\end{axis}\end{tikzpicture}`,
+  advanced_circuit: String.raw`\begin{circuitikz}\draw (0,0) to[R] (2,0);\end{circuitikz}`,
   basic_draw: String.raw`\begin{tikzpicture}
   \draw[thick, ->] (0,0) -- (1,1) -| (2,0) |- (3,1);
 \end{tikzpicture}`,

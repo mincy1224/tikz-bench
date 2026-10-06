@@ -5,7 +5,7 @@ source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [[ ! -f "$source_dir/manifest.json" ]]; then source_dir=$(CDPATH= cd -- "$source_dir/.." && pwd); fi
 tex_dir=${TIKZ_TEX_BIN_DIR:-}
 if [[ -z "$tex_dir" ]] && command -v latex >/dev/null; then tex_dir=$(dirname "$(command -v latex)"); fi
-if [[ $EUID -ne 0 ]]; then exec sudo env TIKZ_TEX_BIN_DIR="$tex_dir" bash "$source_dir/install.sh"; fi
+if [[ $EUID -ne 0 ]]; then exec sudo env TIKZ_TEX_BIN_DIR="$tex_dir" TIKZ_INSTALL_DATABASE="${TIKZ_INSTALL_DATABASE:-}" bash "$source_dir/install.sh"; fi
 [[ -f "$source_dir/SHA256SUMS" && -f "$source_dir/manifest.json" ]] || { echo '安装包缺少版本清单或校验文件' >&2; exit 1; }
 (cd "$source_dir" && sha256sum --strict --check SHA256SUMS >/dev/null)
 command -v systemctl >/dev/null || { echo '需要启用 systemd' >&2; exit 1; }
@@ -42,8 +42,15 @@ install -d -m 0700 "$backup"
 active=0; enabled=0
 systemctl is-active --quiet tikz-bench.service && active=1
 systemctl is-enabled --quiet tikz-bench.service && enabled=1
+backup_name() {
+  case "$1" in
+    */default/tikz-bench) printf '%s' config-tikz-bench ;;
+    */bin/tikz-bench) printf '%s' cli-tikz-bench ;;
+    *) basename "$1" ;;
+  esac
+}
 for item in /etc/default/tikz-bench /etc/systemd/system/tikz-bench.service /usr/local/bin/tikz-bench; do
-  [[ ! -f "$item" ]] || cp -a "$item" "$backup/$(basename "$item")"
+  [[ ! -f "$item" ]] || cp -a "$item" "$backup/$(backup_name "$item")"
 done
 old=$(readlink -f /opt/tikz-bench/current || true)
 if [[ ! -f "$old/apps/server/dist/index.js" && -f /opt/tikz-bench/apps/server/dist/index.js ]]; then
@@ -64,7 +71,7 @@ restore() {
       rm -f /opt/tikz-bench/current
     fi
     for item in /etc/default/tikz-bench /etc/systemd/system/tikz-bench.service /usr/local/bin/tikz-bench; do
-      if [[ -f "$backup/$(basename "$item")" ]]; then cp -a "$backup/$(basename "$item")" "$item"; elif [[ $switched == 1 ]]; then rm -f "$item"; fi
+      if [[ -f "$backup/$(backup_name "$item")" ]]; then cp -a "$backup/$(backup_name "$item")" "$item"; elif [[ $switched == 1 ]]; then rm -f "$item"; fi
     done
     systemctl daemon-reload
     if [[ $enabled == 1 ]]; then systemctl enable tikz-bench.service >/dev/null 2>&1 || true; else systemctl disable tikz-bench.service >/dev/null 2>&1 || true; fi
@@ -75,6 +82,14 @@ restore() {
 trap restore EXIT
 install -d /etc/default
 if [[ ! -f /etc/default/tikz-bench ]]; then printf '%s\n' 'TIKZ_SERVER_HOST=127.0.0.1' 'TIKZ_SERVER_PORT=5173' > /etc/default/tikz-bench; fi
+previous_database=$(sed -n 's/^TIKZ_DATABASE_PATH=//p' /etc/default/tikz-bench | tail -n 1)
+previous_database=${previous_database%\"}; previous_database=${previous_database#\"}
+previous_database=${previous_database:-/var/lib/tikz-bench/tikz-bench.sqlite}
+if [[ -n "${TIKZ_INSTALL_DATABASE:-}" ]]; then
+  [[ "$TIKZ_INSTALL_DATABASE" == /var/lib/tikz-bench/*.sqlite && "$TIKZ_INSTALL_DATABASE" != *'..'* && "$TIKZ_INSTALL_DATABASE" != *$'\n'* && "$TIKZ_INSTALL_DATABASE" != *'"'* ]] || { echo '无效数据库路径'; exit 1; }
+  sed -i '/^TIKZ_DATABASE_PATH=/d' /etc/default/tikz-bench
+  printf '\nTIKZ_DATABASE_PATH="%s"\n' "$TIKZ_INSTALL_DATABASE" >> /etc/default/tikz-bench
+fi
 if ! grep -q '^PATH=' /etc/default/tikz-bench; then printf '\nPATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' "$tex_dir" >> /etc/default/tikz-bench; fi
 # Validate the actual service isolation and EnvironmentFile before switching.
 systemd-run --quiet --wait --pipe --collect --unit="tikz-bench-preflight-$stamp" \
@@ -88,7 +103,8 @@ systemctl stop tikz-bench.service || true
 database=/var/lib/tikz-bench/tikz-bench.sqlite
 configured_db=$(sed -n 's/^TIKZ_DATABASE_PATH=//p' /etc/default/tikz-bench | tail -n 1)
 [[ -z "$configured_db" ]] || database=${configured_db%\"}; database=${database#\"}
-if [[ -f "$database" ]]; then sqlite3 "$database" ".backup '$backup/projects.sqlite'"; fi
+if [[ -f "$previous_database" ]]; then sqlite3 "$previous_database" ".backup '$backup/projects.sqlite'"; fi
+if [[ "$database" != "$previous_database" && -f "$database" ]]; then sqlite3 "$database" ".backup '$backup/selected-projects.sqlite'"; fi
 switched=1
 ln -sfn "$release" /opt/tikz-bench/.current-new
 mv -Tf /opt/tikz-bench/.current-new /opt/tikz-bench/current

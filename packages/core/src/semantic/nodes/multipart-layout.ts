@@ -574,7 +574,7 @@ export function resolveRectangleSplitUseCustomFill(options: OptionListAst | unde
   }
   let value = true;
   for (const entry of options.entries) {
-    if (entry.kind !== "kv" || entry.key !== "rectangle split use custom fill") {
+    if (entry.kind !== "kv" || (entry.key !== "rectangle split uses custom fill" && entry.key !== "rectangle split use custom fill")) {
       continue;
     }
     const parsed = parseBooleanishNormalized(normalizeOptionValue(entry.valueRaw));

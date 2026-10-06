@@ -50,7 +50,9 @@ export function buildSnapContext(input: BuildSnapContextInput): SnapContext {
   const viewportPaddingWorld = settings.viewportPaddingPx / zoom;
   const viewportFilter = viewportWorld ? expandBounds(viewportWorld, viewportPaddingWorld) : null;
 
-  const sourceBounds = collectSourceReferenceBounds(input.sceneElements);
+  const sourceBounds = input.referenceBounds
+    ? new Map([...input.referenceBounds].map(([sourceId, bounds]) => [sourceId, { ...bounds, sourceId }]))
+    : collectSourceReferenceBounds(input.sceneElements);
   const referenceBounds: SnapBounds[] = [];
 
   for (const bounds of sourceBounds.values()) {

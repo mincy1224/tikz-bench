@@ -1,0 +1,10 @@
+.canvas { height: 100%; display: flex; flex-direction: column; background: var(--bg-pane); min-height: 0; outline: none; }
+.status { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.status button, .objects button { border: 1px solid var(--border); border-radius: 5px; background: var(--bg-app); color: inherit; padding: 5px 9px; cursor: pointer; }
+.objects button[aria-pressed=true] { border-color: #4285ef; }
+.stage { flex: 1; position: relative; min-height: 120px; margin: 20px; background: white; border-radius: 6px; overflow: hidden; }
+.svg, .overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.svg > svg { width: 100%; height: 100%; }
+.objects { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; max-height: 100px; overflow: auto; }
+.error { margin: 8px; padding: 8px; font-size: 12px; white-space: pre-wrap; max-height: 140px; overflow: auto; color: #b44343; }
+.placeholder { padding: 20px; font-size: 13px; }

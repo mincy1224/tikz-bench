@@ -30,12 +30,16 @@ describe("source installation entry point", () => {
       await put("mock/node", `#!/bin/bash
 if [[ $1 == scripts/prepare-install.mjs ]]; then
   printf '#!/bin/bash\\necho deployed > "$FIXTURE_ROOT/deployed"\\n' > "$2/install.sh"
+elif [[ $1 == -p && $2 == process.platform ]]; then
+  echo linux
+elif [[ $1 == -e && \${OLD_NODE:-} == 1 ]]; then
+  exit 1
 else
   exec '${posix(process.execPath)}' "$@"
 fi
 `);
-      await put("mock/npm", '#!/bin/bash\nprintf "%s\\n" "$*" >> "$FIXTURE_ROOT/build.log"\nif [[ ${FAIL_BUILD:-} == 1 && $1 == run ]]; then exit 42; fi\n');
-      const run = (fail: boolean) => spawnSync(bash, ["-c", `export PATH='${root}/mock':$PATH FIXTURE_ROOT='${root}' TIKZ_TEX_BIN_DIR='${root}/tex' FAIL_BUILD=${fail ? 1 : 0}; bash '${root}/install.sh'`], { encoding: "utf8", timeout: 30000 });
+      await put("mock/npm", '#!/bin/bash\n[[ $PATH != *"/mnt/c/WindowsNode"* ]] || exit 98\n[[ $1 == --version ]] && { echo 10.9.4; exit 0; }\nprintf "%s\\n" "$*" >> "$FIXTURE_ROOT/build.log"\nif [[ ${FAIL_BUILD:-} == 1 && $1 == run ]]; then exit 42; fi\n');
+      const run = (fail: boolean, old = false) => spawnSync(bash, ["-c", `export PATH='${root}/mock':/mnt/c/WindowsNode:$PATH FIXTURE_ROOT='${root}' TIKZ_TEX_BIN_DIR='${root}/tex' FAIL_BUILD=${fail ? 1 : 0} OLD_NODE=${old ? 1 : 0}; bash '${root}/install.sh'`], { encoding: "utf8", timeout: 30000 });
       const success = run(false);
       expect(success.status, success.stdout + success.stderr).toBe(0);
       expect(await readFile(path.join(directory, "build.log"), "utf8")).toBe("ci --include=dev\nrun build\nrun build:full\n");
@@ -45,6 +49,11 @@ fi
       expect(failure.status).toBe(42);
       expect(await readdir(directory)).not.toContain("deployed");
       expect((await readdir(directory)).filter((file) => file.startsWith(".install-build-") && file !== ".install-build.lock")).toEqual([]);
+      const before = await readFile(path.join(directory, "build.log"), "utf8");
+      const unsupported = run(false, true);
+      expect(unsupported.status).toBe(1);
+      expect(unsupported.stderr).toContain("22.13+");
+      expect(await readFile(path.join(directory, "build.log"), "utf8")).toBe(before);
     } finally {
       if (path.dirname(directory) !== workspace || !path.basename(directory).startsWith(".install-build-fixture-")) throw new Error("Unsafe cleanup");
       await rm(directory, { recursive: true, force: true });

@@ -6,7 +6,9 @@ import { loadDockLayout, saveDockLayout } from "../store/workspace-storage";
 import { SourcePanel } from "./source-panel/SourcePanel";
 import { CanvasPanel } from "./canvas-panel/CanvasPanel";
 import { FigureNavigator } from "./FigureNavigator";
-import { InspectorPanel } from "./inspector-panel/InspectorPanel";
+import { FormatPanel } from "./format-panel";
+import { AdvancedCanvas } from "./advanced-canvas";
+import { EditorRecovery } from "./EditorRecovery";
 import { ObjectsPanel } from "./objects-panel/ObjectsPanel";
 import { StylesPanel } from "./StylesPanel";
 import type { SvgRenderModel } from "tikz-editor/svg";
@@ -355,7 +357,7 @@ let activeDockHandle: DockLayoutHandle | null = null;
 const MemoSourcePanel = memo(SourcePanel);
 const MemoCanvasPanel = memo(CanvasPanel);
 const MemoFigureNavigator = memo(FigureNavigator);
-const MemoInspectorPanel = memo(InspectorPanel);
+const MemoInspectorPanel = memo(FormatPanel);
 const MemoObjectsPanel = memo(ObjectsPanel);
 const MemoStylesPanel = memo(StylesPanel);
 
@@ -375,6 +377,7 @@ function createInitialModel(): Model {
 
 export function DockLayout({ repeatPreviewModel }: DockLayoutProps) {
   const dispatch = useEditorStore((s) => s.dispatch);
+  const hasAdvanced = useEditorStore((s) => /\\begin\{(?:forest|axis|semilogxaxis|semilogyaxis|loglogaxis|groupplot|circuitikz)\}/u.test(s.source));
   const [model, setModel] = useState(createInitialModel);
 
   // Factory — renders panel content for each tab
@@ -391,7 +394,7 @@ export function DockLayout({ repeatPreviewModel }: DockLayoutProps) {
         case "canvas":
           return (
             <Suspense fallback={<div style={{ display: "grid", placeItems: "center", height: "100%" }}>Loading canvas…</div>}>
-              <MemoCanvasPanel repeatPreviewModel={repeatPreviewModel} />
+              <EditorRecovery>{hasAdvanced ? <AdvancedCanvas /> : <MemoCanvasPanel repeatPreviewModel={repeatPreviewModel} />}</EditorRecovery>
             </Suspense>
           );
         case "figure-navigator":
@@ -401,7 +404,7 @@ export function DockLayout({ repeatPreviewModel }: DockLayoutProps) {
             </Suspense>
           );
         case "inspector":
-          return <MemoInspectorPanel />;
+          return <EditorRecovery><MemoInspectorPanel /></EditorRecovery>;
         case "objects":
           return <MemoObjectsPanel />;
         case "styles":
@@ -412,7 +415,7 @@ export function DockLayout({ repeatPreviewModel }: DockLayoutProps) {
           return <div>Unknown panel: {component}</div>;
       }
     },
-    [repeatPreviewModel]
+    [repeatPreviewModel, hasAdvanced]
   );
 
   // On model change: persist + sync to Zustand

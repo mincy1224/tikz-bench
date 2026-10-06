@@ -1,4 +1,5 @@
 import type { Statement } from "tikz-editor/ast/types";
+import { isSemanticScope } from "tikz-editor/edit/actions/group-ungroup-actions";
 import { pt, svgBounds } from "tikz-editor/coords/index";
 import type { SceneElement } from "tikz-editor/semantic/types";
 import type { SvgBounds, SvgPoint } from "../coords/types";
@@ -58,7 +59,12 @@ export function buildScopeOverlayIndex(
         continue;
       }
 
-      const childBounds = visit(statement.body, statement.id, [...ancestors, statement.id]);
+      const semanticOnly = isSemanticScope(statement);
+      const childBounds = visit(statement.body, semanticOnly ? parentScopeId : statement.id, semanticOnly ? ancestors : [...ancestors, statement.id]);
+      if (semanticOnly) {
+        if (childBounds) mergedBounds = mergedBounds ? mergeBounds(mergedBounds, childBounds) : childBounds;
+        continue;
+      }
       scopesById.set(statement.id, {
         scopeId: statement.id,
         parentScopeId,

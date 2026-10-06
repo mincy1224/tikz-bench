@@ -5,6 +5,7 @@ import type { ResizeRole } from "tikz-editor/edit/actions";
 import { FIT_DIRECT_MANIPULATION_BLOCK_REASON, sourceUsesFitNodeFromParseResult } from "tikz-editor/edit/fit";
 import { resolvePropertyTargetFromParseResult } from "tikz-editor/edit/property-target";
 import { resolveTransformInspectorMutationContextFromOptionEntries } from "tikz-editor/edit/property-write-builders";
+import { collectArrangeWorldBounds } from "tikz-editor/edit/scope-bounds";
 import { collectSourceWorldBounds } from "tikz-editor/edit/snapping";
 import { parseCoordinateLike, parseLength } from "tikz-editor/semantic/coords/parse-length";
 import type { EditHandle, NodeAnchorTarget, SceneElement, ScenePath, SceneText } from "tikz-editor/semantic/types";
@@ -200,8 +201,8 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
     if (!snapshot.scene) {
       return collectSourceWorldBounds([]);
     }
-    return collectSourceWorldBounds(snapshot.scene.elements);
-  }, [snapshot.scene]);
+    return collectArrangeWorldBounds(snapshot.scene.elements, snapshot.parseResult?.figure.body ?? []);
+  }, [snapshot.scene, snapshot.parseResult]);
 
   const nodeAnchorTargets = useMemo<readonly NodeAnchorTarget[]>(
     () => [
@@ -391,16 +392,6 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       if (!movableScopeSourceIds.has(sourceId)) {
         continue;
       }
-      const resolvedTarget = snapshot.parseResult
-        ? resolvePropertyTargetFromParseResult(snapshot.source, snapshot.parseResult, sourceId)
-        : { kind: "not-found" as const };
-      const transformContext =
-        resolvedTarget.kind === "found"
-          ? resolveTransformInspectorMutationContextFromOptionEntries(resolvedTarget.target.options?.entries)
-          : resolveTransformInspectorMutationContextFromOptionEntries(null);
-      if (Math.abs(transformContext.values.rotate) > 1e-6) {
-        continue;
-      }
       const bounds = scopeOverlay.boundsByScopeId.get(sourceId);
       if (!bounds) {
         continue;
@@ -413,7 +404,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       sourceIds.add(sourceId);
     }
     return sourceIds;
-  }, [movableScopeSourceIds, scopeOverlay.boundsByScopeId, selectedElementIds, snapshot.parseResult, snapshot.source]);
+  }, [movableScopeSourceIds, scopeOverlay.boundsByScopeId, selectedElementIds]);
 
   const resizeFrameSourceIds = useMemo(() => {
     const sourceIds = new Set<string>(resizablePathShapeSourceIds);
@@ -896,6 +887,20 @@ function deriveUnnamedNodeAnchorTargets(input: {
   const nodeNamesBySourceId = collectNodeNamesBySourceId(input.statements);
   const targets: NodeAnchorTarget[] = [];
   const seen = new Set<string>();
+  const visitShapes = (statements: readonly Statement[]) => {
+    for (const statement of statements) {
+      if (statement.kind === "Scope") { visitShapes(statement.body); continue; }
+      if (statement.kind !== "Path" || statement.items.some((item) => item.kind === "Node")) continue;
+      if (!statement.items.some((item) => item.kind === "PathKeyword" && ["rectangle", "circle", "ellipse"].includes(item.keyword))) continue;
+      const bounds = input.sourceBoundsWorld.get(statement.id);
+      if (!bounds) continue;
+      const mx = (bounds.minX + bounds.maxX) / 2; const my = (bounds.minY + bounds.maxY) / 2;
+      for (const [anchor, x, y] of [["center", mx, my], ["east", bounds.maxX, my], ["west", bounds.minX, my], ["north", mx, bounds.maxY], ["south", mx, bounds.minY]] as const) {
+        targets.push({ nodeName: "", nodeSourceId: statement.id, anchor, world: worldPoint(pt(x), pt(y)), tier: "basic" });
+      }
+    }
+  };
+  visitShapes(input.statements);
   for (const handle of input.editHandles) {
     if (handle.kind !== "node-position") {
       continue;

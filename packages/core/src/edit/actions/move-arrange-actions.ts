@@ -4,7 +4,7 @@ import { pt } from "../../coords/scalars.js";
 import type { OptionEntry } from "../../options/types.js";
 import { evaluateTikzFigure } from "../../semantic/evaluate.js";
 import { worldPoint } from "../../coords/points.js";
-import type { WorldPoint } from "../../coords/points.js";
+import type { WorldBounds, WorldPoint } from "../../coords/points.js";
 import type { EditHandle } from "../../semantic/types.js";
 import type { ScenePathShapeHint } from "../../semantic/types.js";
 import { parseCoordinateLike, parseLength } from "../../semantic/coords/parse-length.js";
@@ -28,6 +28,17 @@ import { normalizeOptionKey } from "../option-key.js";
 import { FIT_DIRECT_MANIPULATION_BLOCK_REASON, sourceUsesFitNodeFromParseResult } from "../fit.js";
 import { findPathStatementById, normalizeElementIds, uniqueStrings } from "../statement-find.js";
 
+function outermostSelection(source: string, ids: readonly string[], parseOptions: EditParseOptions): string[] {
+  const selected = normalizeElementIds(ids);
+  const statements = new Map<string, Statement>();
+  const visit = (items: readonly Statement[]) => { for (const item of items) { statements.set(item.id, item); if (item.kind === "Scope") visit(item.body); } };
+  visit(parseTikzForEdit(source, parseOptions).figure.body);
+  return selected.filter((id) => {
+    const item = statements.get(id); if (!item) return true;
+    return !selected.some((parentId) => { const parent = statements.get(parentId); return parentId !== id && parent?.kind === "Scope" && parent.span.from <= item.span.from && parent.span.to >= item.span.to; });
+  });
+}
+
 const ARRANGE_EPSILON = 1e-6;
 const CENTER_PIVOT_EPSILON = 1e-3;
 
@@ -36,7 +47,7 @@ type KeyValueOptionEntry = Extract<OptionEntry, { kind: "kv" }>;
 type KeyValueOptionCandidate = { entry: KeyValueOptionEntry; index: number };
 type MoveRewriteBatchResult = Exclude<EditActionResultLike, { kind: "error" }>;
 
-export type AlignElementsAction = { elementIds: string[]; mode: AlignMode };
+export type AlignElementsAction = { elementIds: string[]; mode: AlignMode; referenceBounds?: WorldBounds };
 export type DistributeElementsAction = { elementIds: string[]; axis: DistributeAxis };
 
 export function applyMoveElementsAction(
@@ -47,7 +58,7 @@ export function applyMoveElementsAction(
   formatPrecision: DragFormatPrecision | undefined,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
-  const normalizedIds = normalizeElementIds(elementIds);
+  const normalizedIds = outermostSelection(source, elementIds, parseOptions);
   if (normalizedIds.length === 0) {
     return { kind: "unsupported", reason: "No element ids were provided for moveElements" };
   }
@@ -216,8 +227,8 @@ export function applyAlignElementsAction(
   action: AlignElementsAction,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
-  const normalizedIds = normalizeElementIds(action.elementIds);
-  if (normalizedIds.length < 2) {
+  const normalizedIds = outermostSelection(source, action.elementIds, parseOptions);
+  if (normalizedIds.length < (action.referenceBounds ? 1 : 2)) {
     return { kind: "unsupported", reason: "Align requires at least 2 selected elements." };
   }
 
@@ -226,7 +237,7 @@ export function applyAlignElementsAction(
   });
   const semantic = evaluateTikzFigure(parsed.figure, source);
   const boundsBySource = collectArrangeWorldBounds(semantic.scene.elements, parsed.figure.body);
-  const plan = planAlignDeltas(boundsBySource, normalizedIds, action.mode);
+  const plan = planAlignDeltas(boundsBySource, normalizedIds, action.mode, undefined, action.referenceBounds);
   if (plan.kind === "unsupported") {
     return plan;
   }
@@ -239,7 +250,7 @@ export function applyDistributeElementsAction(
   action: DistributeElementsAction,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
-  const normalizedIds = normalizeElementIds(action.elementIds);
+  const normalizedIds = outermostSelection(source, action.elementIds, parseOptions);
   if (normalizedIds.length < 3) {
     return { kind: "unsupported", reason: "Distribute requires at least 3 selected elements." };
   }
@@ -936,7 +947,7 @@ function applyElementDeltaMapStrict(
   deltasBySource: ReadonlyMap<string, WorldPoint>,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
-  const normalizedIds = normalizeElementIds(elementIds);
+  const normalizedIds = outermostSelection(source, elementIds, parseOptions);
   if (normalizedIds.length === 0) {
     return { kind: "unsupported", reason: "No element ids were provided for arrange operation." };
   }

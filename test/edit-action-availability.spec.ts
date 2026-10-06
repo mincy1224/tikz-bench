@@ -360,7 +360,6 @@ describe("getEditActionAvailability", () => {
       scene: transformedRendered.semantic.scene,
       editHandles: transformedRendered.semantic.editHandles
     });
-    expect(transformed.ungroup.enabled).toBe(false);
-    expect(transformed.ungroup.reason).toContain("without options");
+    expect(transformed.ungroup.enabled).toBe(true);
   });
 });

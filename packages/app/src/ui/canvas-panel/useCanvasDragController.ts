@@ -1,3 +1,4 @@
+import { useResizePreference } from "../resize-preference";
 import { useEffect, useRef } from "react";
 import type { AdornmentOwnerGeometry } from "tikz-editor/ast/types";
 import {
@@ -496,7 +497,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         return;
       }
 
-      if (!svgResult || (snapshotSource !== source && drag.kind !== "resize")) {
+      if (!svgResult || (snapshotSource !== source && drag.kind !== "resize" && !(drag.kind === "element" && drag.transaction))) {
         setNodeAnchorOverlay(null);
         setSnapLines([]);
         maybeTriggerSnapFeedback(false);
@@ -546,9 +547,30 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
           lines: []
         });
 
+        if (drag.transaction) {
+          try { drag.transaction.preview((base) => {
+            const result = applyEditAction(base, [], {
+            kind: "resizeElement",
+            scaleContents: useResizePreference.getState().whole,
+            elementId: drag.elementId,
+            role: drag.role,
+            newWorld: world,
+            preserveAspect: event.shiftKey,
+            preserveAspectRatio: drag.preserveAspectRatio ?? undefined,
+            formatPrecision,
+            referenceBounds: resizeFrameWorldBounds(drag.initialFrame),
+            referenceScopeTransform: drag.elementId.startsWith("scope:")
+              ? drag.initialScopeTransform ?? undefined
+              : undefined
+          }, { parseOptions: { activeFigureId: useEditorStore.getState().activeFigureId } });
+            if (result.kind !== "success") throw new Error(result.kind === "error" ? result.message : result.reason);
+            return result.newSource;
+          }); } catch (error_) { setWarning(String(error_)); }
+        } else {
         applyActionWithFeedback(
           {
             kind: "resizeElement",
+            scaleContents: useResizePreference.getState().whole,
             elementId: drag.elementId,
             role: drag.role,
             newWorld: world,
@@ -562,6 +584,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
           },
           drag.historyMergeKey
         );
+        }
         return;
       }
 
@@ -841,6 +864,19 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
           return;
         }
 
+        if (drag.transaction && drag.baselineHandles) {
+          try {
+            drag.transaction.preview((base) => {
+              const result = applyEditAction(base, drag.baselineHandles ?? [], {
+                kind: "moveElements", elementIds: drag.elementIds, delta: makeWorldPoint(totalDelta.x, totalDelta.y), formatPrecision
+              }, { parseOptions: { sourceFingerprint: drag.baselineHandles?.[0]?.sourceRef.sourceFingerprint } });
+              if (result.kind !== "success") throw new Error(result.kind === "error" ? result.message : result.reason);
+              return result.newSource;
+            });
+            drag.lastAppliedTotalDelta = totalDelta;
+          } catch (error) { setWarning(error instanceof Error ? error.message : String(error)); }
+          return;
+        }
         const result = applyActionWithFeedback(
           {
             kind: "moveElements",
@@ -1203,6 +1239,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         });
       }
 
+      if (drag.kind === "element" || drag.kind === "resize") drag.transaction?.finish(event.type === "pointercancel");
       setNodeAnchorOverlay(null);
       setSnapLines([]);
       setDragTooltip(null);
@@ -1236,6 +1273,10 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     }
 
     function onWorldKeyDown(event: KeyboardEvent) {
+      const drag = dragRef.current;
+      if (event.key === "Escape" && (drag?.kind === "element" || drag?.kind === "resize") && drag.transaction) {
+        drag.transaction.finish(true); setDragState(null); setSnapLines([]); event.preventDefault(); return;
+      }
       if (event.repeat) {
         return;
       }

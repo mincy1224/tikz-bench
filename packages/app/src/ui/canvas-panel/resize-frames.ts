@@ -61,6 +61,12 @@ export function resolveResizeFrameForSource(
   const textElements = sourceElements.filter(
     (element): element is SceneText => element.kind === "Text"
   );
+  // Multipart nodes paint an outline, separators and per-part fills. Their
+  // first path is the shape outline; counting paint primitives loses identity.
+  if (nonTextElements.length > 1 && editHandles.some((handle) => handle.sourceRef.sourceId === sourceId && handle.kind === "node-position")) {
+    const outline = nonTextElements.find((element) => element.kind === "Path");
+    if (outline?.kind === "Path") return resolveNodePathResizeFrame(outline, sourceElements, editHandles, sourceId, viewBox);
+  }
   if (nonTextElements.length === 1) {
     const element = nonTextElements[0];
     if (!element) {

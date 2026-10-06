@@ -26,10 +26,12 @@ export async function resetStorageBeforeNavigation(page: Page): Promise<void> {
 
 export async function gotoApp(page: Page, path = "/"): Promise<void> {
   await page.goto(path);
-  const newProject = page.getByRole("button", { name: "New project" });
+  const newProject = page.getByRole("button", { name: "新建项目" });
   if (path === "/") {
     await expect(newProject).toBeVisible();
     await newProject.click();
+    await page.getByRole("textbox", { name: "项目名称" }).fill(`Test ${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await page.getByRole("button", { name: "确定", exact: true }).click();
     await page.waitForURL(/\/project\/[0-9a-f-]+$/u);
   }
   await expect(page.getByTestId("tab-strip")).toBeVisible();

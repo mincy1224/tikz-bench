@@ -1,3 +1,5 @@
+import { collectArrangeWorldBounds } from "../scope-bounds.js";
+import { scaleObjectStyle } from "../scale-object-style.js";
 import type { EditActionResultLike } from "../result-types.js";
 import type {
   EditHandle,
@@ -25,7 +27,7 @@ import { evaluateTikzFigure } from "../../semantic/evaluate.js";
 import { parseCircleRadiusFromCoordinateRaw, parseEllipseRadiiFromCoordinateRaw } from "../../semantic/path/parsers.js";
 import { parseLength } from "../../semantic/coords/parse-length.js";
 import { resolveNodeShape } from "../../semantic/nodes/options.js";
-import { inverseMatrix } from "../../semantic/transform.js";
+import { inverseMatrix, multiplyMatrix } from "../../semantic/transform.js";
 import { collectSourceWorldBounds } from "../snapping/index.js";
 import { worldToLocal } from "../coords.js";
 import { replaceSpan } from "../patch.js";
@@ -81,6 +83,7 @@ type ResizeRole =
 type NodeWidthResizeStrategy = "minimum-width" | "text-width";
 
 export type ResizeElementAction = {
+  scaleContents?: boolean;
   elementId: string;
   role: ResizeRole;
   newWorld: WorldPoint;
@@ -108,6 +111,22 @@ export function applyResizeElementAction(
   evaluateOptions: EvaluateOptions | undefined,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
+  if (action.scaleContents) {
+    const geometry = applyResizeElementAction(source, { ...action, scaleContents: false, preserveAspect: true }, evaluateOptions, parseOptions);
+    if (geometry.kind !== "success") return geometry;
+    const before = evaluateTikzFigure(parseTikzForEdit(source, parseOptions).figure, source, evaluateOptions);
+    const after = evaluateTikzFigure(parseTikzForEdit(geometry.newSource, parseOptions).figure, geometry.newSource, evaluateOptions);
+    const oldBounds = collectArrangeWorldBounds(before.scene.elements, parseTikzForEdit(source, parseOptions).figure.body).get(action.elementId);
+    const newBounds = collectArrangeWorldBounds(after.scene.elements, parseTikzForEdit(geometry.newSource, parseOptions).figure.body).get(action.elementId);
+    if (!oldBounds || !newBounds) return geometry;
+    const factor = (newBounds.maxX - newBounds.minX) / Math.max(RESIZE_EPSILON, oldBounds.maxX - oldBounds.minX);
+    const ids: string[] = [];
+    const visit = (body: Statement[], inside = false): void => { for (const statement of body) { const selected = inside || statement.id === action.elementId; if (statement.kind === "Scope") visit(statement.body, selected); else if (selected) ids.push(statement.id); } };
+    visit(parseTikzForEdit(source, parseOptions).figure.body);
+    const next = (ids.length ? ids : [action.elementId]).reduce((current, id) => scaleObjectStyle(current, id, factor, source, before.scene.elements), geometry.newSource);
+    const applied = applyTextReplacements(source, [{ span: { from: 0, to: source.length }, text: next }]);
+    return { kind: "success", newSource: next, patches: applied.patches, changedSourceIds: [action.elementId] };
+  }
   const elementId = action.elementId.trim();
   if (elementId.length === 0) {
     return { kind: "unsupported", reason: "Missing element id for resizeElement." };
@@ -131,7 +150,7 @@ export function applyResizeElementAction(
   const boundsBySource = collectSourceWorldBounds(semantic.scene.elements);
   const scopeBoundsById = buildScopeBoundsById(parsed.figure.body, boundsBySource);
   if (findScopeStatementById(parsed.figure.body, elementId)) {
-    return applyResizeScope(source, action, resolved.target, scopeBoundsById, parsed.figure.body);
+    return applyResizeScope(source, action, resolved.target, scopeBoundsById, parsed.figure.body, parseOptions);
   }
   const hasNodePositionHandle = semantic.editHandles.some(
     (handle) => handle.sourceRef.sourceId === elementId && handle.kind === "node-position"
@@ -506,7 +525,8 @@ function applyResizeScope(
   action: ResizeElementAction,
   target: PropertyTarget,
   scopeBoundsById: ReadonlyMap<string, { minX: number; minY: number; maxX: number; maxY: number }>,
-  statements: readonly Statement[]
+  statements: readonly Statement[],
+  parseOptions: EditParseOptions
 ): EditActionResultLike {
   const bounds = action.referenceBounds ?? scopeBoundsById.get(action.elementId);
   if (!bounds) {
@@ -526,9 +546,6 @@ function applyResizeScope(
   }
 
   const currentContext = resolveTransformInspectorMutationContextFromOptionEntries(target.options?.entries);
-  if (Math.abs(currentContext.values.rotate) > 1e-6) {
-    return { kind: "unsupported", reason: "Scope resize currently supports only non-rotated scopes." };
-  }
   const baseValues = action.referenceScopeTransform ?? currentContext.values;
 
   const fixed = resolveFixedScopePoint(bounds, action.role);
@@ -544,8 +561,32 @@ function applyResizeScope(
   nextWidth = Math.max(nextWidth, RESIZE_EPSILON);
   nextHeight = Math.max(nextHeight, RESIZE_EPSILON);
 
-  const scaleRatioX = affectsWidth ? nextWidth / currentWidth : 1;
-  const scaleRatioY = affectsHeight ? nextHeight / currentHeight : 1;
+  let scaleRatioX = affectsWidth ? nextWidth / currentWidth : 1;
+  let scaleRatioY = affectsHeight ? nextHeight / currentHeight : 1;
+  if (action.preserveAspect) {
+    const factor = affectsWidth && affectsHeight ? Math.max(scaleRatioX, scaleRatioY) : affectsWidth ? scaleRatioX : scaleRatioY;
+    scaleRatioX = scaleRatioY = factor;
+  }
+  if (![scaleRatioX, scaleRatioY].every(Number.isFinite)) return { kind: "unsupported", reason: "Scope resize produced a non-finite transform." };
+  if (Math.abs(scaleRatioX - 1) + Math.abs(scaleRatioY - 1) < RESIZE_EPSILON) return { kind: "unsupported", reason: "Resize would not change node constraints." };
+  // Probe the enclosing frame without persisting any synthetic statement.
+  const probe = "\\path (0pt,0pt);";
+  const probeSource = source.slice(0, target.span.from) + probe + source.slice(target.span.from);
+  const probeSemantic = evaluateTikzFigure(parseTikzForEdit(probeSource, parseOptions).figure, probeSource);
+  const probeHandle = probeSemantic.editHandles.find((handle) => handle.sourceRef.sourceSpan.from >= target.span.from && handle.sourceRef.sourceSpan.to <= target.span.from + probe.length && isFrameLocalCoordinateEditHandle(handle));
+  const parent = probeHandle && isFrameLocalCoordinateEditHandle(probeHandle) ? worldTransform(probeHandle.frame.a, probeHandle.frame.b, probeHandle.frame.c, probeHandle.frame.d, probeHandle.frame.e, probeHandle.frame.f) : worldTransform(1, 0, 0, 1, 0, 0);
+  const transformedParent = Math.abs(parent.a - 1) + Math.abs(parent.b) + Math.abs(parent.c) + Math.abs(parent.d - 1) + Math.abs(parent.e) + Math.abs(parent.f) > RESIZE_EPSILON;
+  if (transformedParent || action.preserveAspect || Math.abs(currentContext.values.rotate) > 1e-6 || target.options?.entries.some((entry) => entry.kind === "kv" && normalizeOptionKey(entry.key) === "cm")) {
+    const inverse = inverseMatrix(parent); if (!inverse) return { kind: "unsupported", reason: "The enclosing frame is singular." };
+    const desired = worldTransform(scaleRatioX, 0, 0, scaleRatioY, fixed.x * (1 - scaleRatioX), fixed.y * (1 - scaleRatioY));
+    const local = multiplyMatrix(multiplyMatrix(inverse, desired), parent);
+    const matrix = `cm={${formatNumber(local.a, { fractionDigits: 6 })},${formatNumber(local.b, { fractionDigits: 6 })},${formatNumber(local.c, { fractionDigits: 6 })},${formatNumber(local.d, { fractionDigits: 6 })},(${formatNumber(local.e, { fractionDigits: 4 })}pt,${formatNumber(local.f, { fractionDigits: 4 })}pt)}`;
+    const span = target.optionsSpan ?? { from: target.insertOffset, to: target.insertOffset };
+    const raw = target.optionsSpan ? source.slice(span.from + 1, span.to - 1) : "";
+    const replacement = `[${matrix}${raw.trim() ? `,${raw}` : ""}]`;
+    const rewritten = replaceSpan(source, span, replacement);
+    return { kind: "success", newSource: rewritten.source, patches: [{ oldSpan: span, newSpan: rewritten.changedSpan, replacement }], changedSourceIds: expandScopeChangedSourceIds(statements, [action.elementId]) };
+  }
   const nextValues = {
     xscale: baseValues.xscale * scaleRatioX,
     yscale: baseValues.yscale * scaleRatioY,

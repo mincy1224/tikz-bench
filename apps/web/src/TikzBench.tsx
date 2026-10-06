@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App } from "@tikz-editor/app";
 import css from "./TikzBench.module.css";
 import { COMPONENT_TEMPLATES } from "./component-templates";
+import { ProjectDialog } from "./ProjectDialog";
+import { CoalescingSaveQueue } from "./coalescing-save-queue";
 
 type Project = {
   id: string;
   name: string;
+  description: string;
   source: string;
   revision: number;
   thumbnailSvg: string | null;
@@ -33,6 +36,8 @@ function ProjectHome() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [newProject, setNewProject] = useState<{ name: string; source?: string } | null>(null);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -43,20 +48,18 @@ function ProjectHome() {
   }, []);
   useEffect(refresh, [refresh]);
 
-  const create = async (name = "Untitled Project", source?: string) => {
+  const create = async (name: string, description: string, source?: string) => {
     const result = await api<{ project: Project }>("/api/projects", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, source })
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, description, source })
     });
     navigate(`/project/${result.project.id}`);
   };
 
-  const rename = async (project: Project) => {
-    const requested = window.prompt("Rename project", project.name)?.trim();
-    if (!requested || requested === project.name) return;
+  const rename = async (project: Project, name: string, description: string) => {
     await api(`/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: requested, expectedRevision: project.revision })
+      body: JSON.stringify({ name, description, expectedRevision: project.revision })
     });
     refresh();
   };
@@ -74,15 +77,15 @@ function ProjectHome() {
               window.alert("Only .tex files can be imported.");
               return;
             }
-            void file.text().then((source) => create(file.name.replace(/\.tex$/iu, ""), source));
+            void file.text().then((source) => { setNewProject({ name: file.name.replace(/\.tex$/iu, ""), source }); }).catch((error_: unknown) => { setError(String(error_)); });
           }} />
           <button type="button" className={css.secondary} onClick={() => fileInputRef.current?.click()}>Import TeX</button>
-          <button type="button" className={css.primary} onClick={() => { void create(); }}>New project</button>
+          <button type="button" className={css.primary} onClick={() => { setNewProject({ name: "" }); }}>新建项目</button>
         </div>
       </header>
       <section className={css.content}>
         <div className={css.sectionHeading}><h2>从组件开始</h2><span>复杂组件使用本地 TeX 预览</span></div>
-        <div className={css.templateGrid}>{COMPONENT_TEMPLATES.map((template) => <button key={template.name} type="button" className={css.templateCard} onClick={() => { void create(template.name, template.source); }}>
+        <div className={css.templateGrid}>{COMPONENT_TEMPLATES.map((template) => <button key={template.name} type="button" className={css.templateCard} onClick={() => { setNewProject({ name: template.name, source: template.source }); }}>
           <small>{template.category}</small><strong>{template.name}</strong><span>{template.mode}</span>
         </button>)}</div>
         <div className={css.sectionHeading}><h2>Projects</h2><span>{projects.length} projects</span></div>
@@ -96,7 +99,7 @@ function ProjectHome() {
               <div className={css.cardBody}><div><h3>{project.name}</h3><time>{new Date(project.updatedAt).toLocaleString()}</time></div>
                 <div className={css.cardActions}>
                 <button type="button" title="Rename project" aria-label={`Rename ${project.name}`} onClick={(event) => {
-                  event.stopPropagation(); void rename(project);
+                  event.stopPropagation(); setEditingProject(project);
                 }}>✎</button>
                 <button type="button" title="Delete project" onClick={(event) => {
                   event.stopPropagation();
@@ -108,7 +111,9 @@ function ProjectHome() {
           ))}</div>
         )}
       </section>
-      <footer className={css.footer}>TikZ Bench is a private derivative of the open-source TikZ Editor by Dominik Peters, used under the MIT License.</footer>
+      <footer className={css.footer}>Based on the open-source TikZ Editor by Dominik Peters · MIT License</footer>
+      {newProject ? <ProjectDialog name={newProject.name} onClose={() => { setNewProject(null); }} onSubmit={(name, description) => create(name, description, newProject.source)} /> : null}
+      {editingProject ? <ProjectDialog name={editingProject.name} description={editingProject.description} onClose={() => { setEditingProject(null); }} onSubmit={(name, description) => rename(editingProject, name, description)} /> : null}
     </main>
   );
 }
@@ -119,17 +124,11 @@ function ProjectEditor({ id }: { id: string }) {
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error" | "conflict">("saved");
   const [showSaveHint, setShowSaveHint] = useState(false);
   const revisionRef = useRef(0);
-  const mutationTail = useRef<Promise<void>>(Promise.resolve());
   const draftRef = useRef(draftSource);
   draftRef.current = draftSource;
-  const pendingMutations = useRef(0);
-  const mutationBlocked = useRef(false);
-
-  const persist = useCallback((patch: { source?: string; name?: string; thumbnailSvg?: string }) => {
-    pendingMutations.current += 1;
-    setSaveStatus("saving");
-    const task = mutationTail.current.then(async () => {
-      if (mutationBlocked.current) throw new Error("Project revision conflict. Reload before saving again.");
+  const [editInfo, setEditInfo] = useState(false);
+  const [saveCopy, setSaveCopy] = useState(false);
+  const saveQueue = useMemo(() => new CoalescingSaveQueue<{ source?: string; name?: string; description?: string; thumbnailSvg?: string }, Project>(async (patch) => {
       const { project: saved } = await api<{ project: Project }>(`/api/projects/${id}`, {
         method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...patch, expectedRevision: revisionRef.current })
@@ -137,14 +136,15 @@ function ProjectEditor({ id }: { id: string }) {
       revisionRef.current = saved.revision;
       setProject(saved);
       return saved;
-    });
-    mutationTail.current = task.then(() => {}).catch((error: unknown) => {
-      mutationBlocked.current = true;
-      setSaveStatus(error instanceof Error && error.message.includes("conflict") ? "conflict" : "error");
-    }).finally(() => { pendingMutations.current -= 1; });
-    void task.then((saved) => { if (pendingMutations.current <= 1 && saved.source === draftRef.current) setSaveStatus("saved"); }).catch(() => {});
+  }), [id]);
+  const persist = useCallback((patch: { source?: string; name?: string; description?: string; thumbnailSvg?: string }) => {
+    setSaveStatus("saving");
+    const task = saveQueue.enqueue(patch);
+    void task.then((saved) => {
+      if (!saveQueue.busy && saved.source === draftRef.current) setSaveStatus("saved");
+    }).catch((error: unknown) => { setSaveStatus(error instanceof Error && error.message.includes("conflict") ? "conflict" : "error"); });
     return task;
-  }, [id]);
+  }, [saveQueue]);
 
   useEffect(() => {
     void api<{ project: Project }>(`/api/projects/${id}`).then(({ project: loaded }) => {
@@ -153,13 +153,13 @@ function ProjectEditor({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => {
-    if (!project || draftSource === project.source) return;
+    if (!project || draftSource === project.source || saveStatus === "error" || saveStatus === "conflict") return;
     setSaveStatus("saving");
     const timer = window.setTimeout(() => {
       void persist({ source: draftSource }).catch(() => {});
     }, 700);
     return () => { window.clearTimeout(timer); };
-  }, [draftSource, persist, project]);
+  }, [draftSource, persist, project, saveStatus]);
 
   const download = useCallback(async (kind: "tex" | "pdf") => {
     const response = await fetch(`/api/projects/${id}/export/${kind}`, {
@@ -179,17 +179,7 @@ function ProjectEditor({ id }: { id: string }) {
     URL.revokeObjectURL(url);
   }, [id, project?.name]);
 
-  const rename = useCallback(async () => {
-    if (!project) return;
-    const requested = window.prompt("Rename project", project.name)?.trim();
-    if (!requested || requested === project.name) return;
-    setSaveStatus("saving");
-    try {
-      await persist({ name: requested });
-    } catch (error) {
-      setSaveStatus(error instanceof Error && error.message.includes("conflict") ? "conflict" : "error");
-    }
-  }, [persist, project]);
+  const rename = useCallback(() => { setEditInfo(true); }, []);
 
   const onSaveShortcut = useCallback(() => {
     if (localStorage.getItem(SAVE_HINT_DISABLED_KEY) !== "1") setShowSaveHint(true);
@@ -197,13 +187,19 @@ function ProjectEditor({ id }: { id: string }) {
 
   const projectProps = useMemo(() => project ? {
     id: project.id, name: project.name, source: project.source, saveStatus,
-    onBack: () => { navigate("/"); }, onRename: () => { void rename(); }, onSourceChange: setDraftSource,
+    onBack: () => { navigate("/"); }, onRename: rename, onSourceChange: setDraftSource,
     onSaveShortcut,
     onDownloadTex: () => { void download("tex"); }, onDownloadPdf: () => { void download("pdf"); }
   } : null, [download, onSaveShortcut, project, rename, saveStatus]);
 
   return projectProps ? <>
     <App project={projectProps} />
+    {editInfo && project ? <ProjectDialog name={project.name} description={project.description} onClose={() => { setEditInfo(false); }} onSubmit={async (name, description) => { await persist({ name, description }); }} /> : null}
+    {saveCopy && project ? <ProjectDialog name={`${project.name} draft`} description={project.description} onClose={() => { setSaveCopy(false); }} onSubmit={async (name, description) => {
+      const response = await api<{ project: Project }>("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, description, source: draftRef.current }) });
+      navigate(`/project/${response.project.id}`);
+    }} /> : null}
+    {saveStatus === "error" || saveStatus === "conflict" ? <aside className={css.saveHint} role="alert"><span>{saveStatus === "conflict" ? "其他窗口已更新项目，请另存草稿以保留双方内容。" : "草稿未保存"}</span><button type="button" onClick={() => { setSaveCopy(true); }}>另存草稿</button>{saveStatus === "error" ? <button type="button" onClick={() => { setSaveStatus("saving"); void persist({ source: draftRef.current }).catch(() => {}); }}>重试</button> : null}<button type="button" onClick={() => { void download("tex"); }}>下载草稿</button></aside> : null}
     {showSaveHint ? (
       <aside className={css.saveHint} role="status" aria-live="polite">
         <div><strong>Already saved automatically</strong><span>Ctrl+S is not needed in TikZ Bench.</span></div>
@@ -225,5 +221,5 @@ export function TikzBench() {
     return () => { window.removeEventListener("popstate", update); };
   }, []);
   const match = /^\/project\/([0-9a-f-]+)$/iu.exec(path);
-  return match ? <ProjectEditor id={match[1] ?? ""} /> : <ProjectHome />;
+  return match ? <ProjectEditor key={match[1]} id={match[1] ?? ""} /> : <ProjectHome />;
 }

@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import { loadConfig } from "./config.js";
 import { checkLatex, compileLatex, compileLatexPdf, createStandaloneDocument, LatexCompileError } from "./latex/compiler.js";
-import { createProject, getProject, initializeProjectStore, listProjects, softDeleteProject, updateProject } from "./projects/store.js";
+import { createProject, getProject, initializeProjectStore, listProjects, ProjectInputError, softDeleteProject, updateProject } from "./projects/store.js";
 
 const config = loadConfig();
 let activeCompiles = 0;
@@ -75,13 +75,13 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/projects") {
-      const payload = JSON.parse(await body(request, config.maxSourceBytes + 16_384)) as { name?: unknown; source?: unknown };
-      const name = typeof payload.name === "string" && payload.name.trim() ? payload.name.trim().slice(0, 120) : "Untitled Project";
+      const payload = JSON.parse(await body(request, config.maxSourceBytes + 16_384)) as { name?: unknown; description?: unknown; source?: unknown };
+      const name = typeof payload.name === "string" ? payload.name : "";
       const source = typeof payload.source === "string" ? payload.source : undefined;
       if (source !== undefined && Buffer.byteLength(source, "utf8") > config.maxSourceBytes) {
         json(response, 413, { error: "Source is too large." }); return;
       }
-      json(response, 201, { project: await createProject(config, name, source) });
+      json(response, 201, { project: await createProject(config, name, source, typeof payload.description === "string" ? payload.description : "") });
       return;
     }
     const projectMatch = /^\/api\/projects\/([0-9a-f-]+)$/iu.exec(url.pathname);
@@ -91,12 +91,13 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
     if (projectMatch && request.method === "PATCH") {
-      const payload = JSON.parse(await body(request, config.maxSourceBytes + 32_768)) as { name?: unknown; source?: unknown; expectedRevision?: unknown; thumbnailSvg?: unknown };
+      const payload = JSON.parse(await body(request, config.maxSourceBytes + 32_768)) as { name?: unknown; description?: unknown; source?: unknown; expectedRevision?: unknown; thumbnailSvg?: unknown };
       if (payload.source !== undefined && (typeof payload.source !== "string" || Buffer.byteLength(payload.source, "utf8") > config.maxSourceBytes)) {
         json(response, 413, { error: "Invalid or oversized source." }); return;
       }
       const result = await updateProject(config, projectMatch[1] ?? "", {
-        name: typeof payload.name === "string" ? payload.name.trim().slice(0, 120) : undefined,
+        name: typeof payload.name === "string" ? payload.name : undefined,
+        description: typeof payload.description === "string" ? payload.description : undefined,
         source: typeof payload.source === "string" ? payload.source : undefined,
         expectedRevision: typeof payload.expectedRevision === "number" ? payload.expectedRevision : undefined,
         thumbnailSvg: typeof payload.thumbnailSvg === "string" ? payload.thumbnailSvg : undefined
@@ -141,7 +142,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         return;
       }
       const raw = await body(request, config.maxSourceBytes + 16_384);
-      const payload = JSON.parse(raw) as { source?: unknown; engine?: unknown };
+      const payload = JSON.parse(raw) as { source?: unknown; engine?: unknown; sourceVersion?: unknown };
       if (payload.engine !== undefined && payload.engine !== "latex" && payload.engine !== "xelatex" && payload.engine !== "auto") {
         json(response, 400, { ok: false, error: "Supported profiles: auto, latex, xelatex." });
         return;
@@ -153,7 +154,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       activeCompiles += 1;
       try {
         const result = await compileLatex(payload.source, config, payload.engine);
-        json(response, 200, { ok: true, ...result });
+        json(response, 200, { ok: true, ...result, sourceVersion: typeof payload.sourceVersion === "string" ? payload.sourceVersion : undefined });
       }
       catch (error) {
         if (error instanceof LatexCompileError) {
@@ -170,7 +171,10 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
       return;
     }
     response.writeHead(404, securityHeaders); response.end();
-  } catch (error) { json(response, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }); }
+  } catch (error) {
+    json(response, error instanceof ProjectInputError && error.code === "duplicate_name" ? 409 : 400,
+      { ok: false, code: error instanceof ProjectInputError ? error.code : undefined, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 await initializeProjectStore(config);

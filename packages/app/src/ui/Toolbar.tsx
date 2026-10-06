@@ -19,6 +19,7 @@ import { ToolbarToolPopup, ToolbarPopupSection, ToolbarPopupVisualChoiceGrid } f
 import popupCss from "./ToolbarToolPopup.module.css";
 import type { ToolMode } from "../store/types";
 import css from "./Toolbar.module.css";
+import { FormatPainterButton } from "./format-painter";
 
 const SHAPE_POPUP_CHOICES = NODE_SHAPE_OPTIONS.map((option) => ({
   id: option.value,
@@ -370,6 +371,7 @@ export function Toolbar({ updateChip = null }: ToolbarProps) {
           return separator ? [separator, button] : [button];
         })}
       </div>
+      <FormatPainterButton />
       <div className={css.spacer} />
       {updateChip ? (
         <RenderedTooltip content={`Install update ${updateChip.version}`}>

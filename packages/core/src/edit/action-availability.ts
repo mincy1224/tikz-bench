@@ -554,11 +554,11 @@ function makeUngroupRule(): AvailabilityRule {
     if (facts.hasAdornmentSelection) {
       return "Adornment selections cannot be ungrouped.";
     }
-    if (facts.selectedSourceIds.length !== 1) {
-      return "Select exactly one scope to ungroup.";
+    if (facts.selectedSourceIds.length === 0) {
+      return "Select one or more groups to ungroup.";
     }
 
-    const selectedId = facts.selectedSourceIds[0];
+    for (const selectedId of facts.selectedSourceIds) {
     const parsedTarget = parseEditableTargetId(selectedId);
     if (parsedTarget.kind !== "statement" || !parsedTarget.id.startsWith("scope:")) {
       return "Ungroup currently supports scope selections only.";
@@ -570,7 +570,8 @@ function makeUngroupRule(): AvailabilityRule {
       return "Ungroup currently supports scope selections only.";
     }
     if (!isUngroupableScopeStatement(ref.statement)) {
-      return "Ungroup currently supports only scopes without options, or with `name=...` only.";
+      return "This scope preserves inherited TeX semantics and is not a logical group.";
+    }
     }
     return null;
   };

@@ -6,7 +6,7 @@
 bash install.sh
 ```
 
-目标为启用 systemd 的 Ubuntu 24.04／WSL2，需要 sudo 权限、npm／apt 网络和现有完整 TeX Live。安装器不会安装或替换 TeX；非 TeX 工具缺失时通过 apt 补齐。源码构建需要 Node.js 18.19+ 和 npm，推荐 Node.js 22+。
+目标为启用 systemd 的 Ubuntu 24.04／WSL2，需要 sudo 权限、npm／apt 网络和现有完整 TeX Live。安装器不会安装或替换 TeX；非 TeX 工具缺失时通过 apt 补齐。源码构建需要 Node.js 22.13+ 和 npm 10.5+。
 
 安装器执行 npm ci、核心和前后端构建，创建临时部署目录（不生成压缩包），保留第三方许可证，然后调用系统部署流程。在服务隔离环境验证中英文 SVG/PDF 与 Forest、PGFPlots、Circuitikz 编译，成功后原子切换程序，检查服务健康状态。失败恢复旧程序、配置和原服务状态。首次安装自动启动；升级保留配置、项目数据库和原服务状态。
 

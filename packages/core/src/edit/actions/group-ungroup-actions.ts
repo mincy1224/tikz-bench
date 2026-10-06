@@ -1,5 +1,4 @@
 import type { EditActionResultLike } from "../result-types.js";
-import type { OptionListAst } from "../../options/types.js";
 import { evaluateTikzFigure } from "../../semantic/evaluate.js";
 import type { SemanticDependencyGraph } from "../../semantic/dependencies.js";
 import type { Statement, Span } from "../../ast/types.js";
@@ -109,31 +108,46 @@ export function applyUngroupElementsAction(
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
   const statementIds = normalizeStatementIds(elementIds);
-  if (statementIds.length !== 1) {
-    return { kind: "unsupported", reason: "Ungroup currently requires exactly one selected scope." };
+  if (statementIds.length === 0) return { kind: "unsupported", reason: "Select a group to ungroup." };
+  if (statementIds.length > 1) {
+    const snapshot = parseStatementSnapshot(source, parseOptions);
+    const refs = statementIds.map((id) => snapshot.byId.get(id));
+    if (refs.some((ref) => !ref || !isUngroupableScopeStatement(ref.statement))) return { kind: "unsupported", reason: "Every selected object must be a logical group." };
+    const outer = refs.filter((ref) => ref && !refs.some((parent) => parent && parent !== ref && parent.span.from <= ref.span.from && parent.span.to >= ref.span.to));
+    const replacements: { span: Span; text: string }[] = [];
+    for (const ref of outer) {
+      if (!ref) continue;
+      const result = applyUngroupElementsAction(source, [ref.id], parseOptions);
+      if (result.kind !== "success") return result;
+      const suffix = source.length - ref.span.to;
+      replacements.push({ span: ref.span, text: result.newSource.slice(ref.span.from, result.newSource.length - suffix) });
+    }
+    const applied = applyTextReplacements(source, replacements);
+    return { kind: "success", newSource: applied.source, patches: applied.patches, changedSourceIds: [], selectedSourceIds: [] };
   }
 
   const scopeId = statementIds[0];
   const snapshot = parseStatementSnapshot(source, parseOptions);
   const ref = snapshot.byId.get(scopeId);
-  if (ref?.statement.kind !== "Scope") {
+  if (ref?.statement.kind !== "Scope" || isSemanticScope(ref.statement)) {
     return { kind: "unsupported", reason: "Ungroup currently supports scope selections only." };
   }
 
   const scopeStatement = ref.statement;
-  const optionCheck = validateUngroupableScopeOptions(scopeStatement.options);
-  if (!optionCheck.allowed) {
-    return { kind: "unsupported", reason: optionCheck.reason };
-  }
 
   const parentRefs = snapshot.byParentKey.get(ref.parentKey)!;
   const indent = lineIndentAtOffset(source, ref.span.from);
   const newline = detectPreferredNewline(source, ref.span.from);
   const separator = resolveStatementSeparator(source, parentRefs, indent, newline);
   const bodySnippets = scopeStatement.body.map((statement) => source.slice(statement.span.from, statement.span.to));
-  const replacementText = bodySnippets
+  let replacementText = bodySnippets
     .map((snippet) => reindentInlineStatement(snippet, indent))
     .join(separator);
+  const inherited = scopeStatement.options?.entries.filter((entry) => entry.kind !== "kv" || normalizeOptionKey(entry.key) !== "name") ?? [];
+  if (inherited.length) {
+    const options = inherited.map((entry) => source.slice(entry.span.from, entry.span.to)).join(",");
+    replacementText = `\\begin{scope}[${options},name=__tikz_bench_semantic]${newline}${replacementText}${newline}${indent}\\end{scope}`;
+  }
 
   const applied = applyTextReplacements(source, [{ span: ref.span, text: replacementText }]);
   const appliedReplacement = applied.applied[0];
@@ -141,10 +155,11 @@ export function applyUngroupElementsAction(
   let selectedSourceIds: string[] | undefined;
   if (replacementText.length > 0) {
     const nextSnapshot = parseStatementSnapshot(applied.source, parseOptions);
-    const selectedRefs = nextSnapshot.byParentKey.get(ref.parentKey)!
+    const selectedRefs = [...nextSnapshot.byId.values()]
       .filter((candidate) =>
         candidate.span.from >= appliedReplacement.newSpan.from &&
-        candidate.span.to <= appliedReplacement.newSpan.to
+        candidate.span.to <= appliedReplacement.newSpan.to &&
+        candidate.statement.kind !== "Scope"
       )
       .sort((left, right) => left.index - right.index);
     if (selectedRefs.length > 0) {
@@ -427,26 +442,6 @@ function resolveIndentUnit(
   return " ".repeat(shortestExtra ?? 2);
 }
 
-function validateUngroupableScopeOptions(options: OptionListAst | undefined): { allowed: true } | { allowed: false; reason: string } {
-  if (!options) {
-    return { allowed: true };
-  }
-  if (options.entries.length === 0) {
-    return { allowed: true };
-  }
-
-  for (const entry of options.entries) {
-    if (entry.kind === "unknown") {
-      return { allowed: false, reason: "Ungroup currently supports only scopes without options, or with `name=...` only." };
-    }
-    if (normalizeOptionKey(entry.key) !== "name") {
-      return { allowed: false, reason: "Ungroup currently supports only scopes without options, or with `name=...` only." };
-    }
-  }
-
-  return { allowed: true };
-}
-
 function resolveStatementIdBySpan(
   source: string,
   span: Span,
@@ -534,5 +529,9 @@ function normalizeStatementIds(elementIds: readonly string[]): string[] {
 }
 
 export function isUngroupableScopeStatement(statement: Statement): boolean {
-  return statement.kind === "Scope" && validateUngroupableScopeOptions(statement.options).allowed;
+  return statement.kind === "Scope" && !isSemanticScope(statement);
+}
+
+export function isSemanticScope(statement: Statement): boolean {
+  return statement.kind === "Scope" && Boolean(statement.options?.entries.some((entry) => entry.kind === "kv" && entry.key === "name" && entry.valueRaw === "__tikz_bench_semantic"));
 }

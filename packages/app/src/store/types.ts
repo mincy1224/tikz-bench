@@ -308,7 +308,7 @@ export type EditorState = {
 };
 
 export type EditorAction =
-  | { type: "COMMIT_PROPERTY_SOURCE"; source: string; expectedSource: string }
+  | { type: "COMMIT_PROPERTY_SOURCE"; source: string; expectedSource: string; documentId?: string; label?: string }
   // Document
   | { type: "LOAD_PROJECT"; source: string; title: string }
   | { type: "CODE_EDITED"; source: string }

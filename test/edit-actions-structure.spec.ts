@@ -995,7 +995,7 @@ describe("applyEditAction – group/ungroup", () => {
     expect(result.newSource).toContain("\\draw (0,0) -- (1,0);");
   });
 
-  it("refuses ungroup when scope has transform/style options", () => {
+  it("preserves transform/style options in a non-group scope", () => {
     const source = String.raw`\begin{tikzpicture}
   \begin{scope}[shift={(1,0)}]
     \draw (0,0) -- (1,0);
@@ -1007,12 +1007,12 @@ describe("applyEditAction – group/ungroup", () => {
       elementIds: ["scope:0"]
     });
 
-    expect(result.kind).toBe("unsupported");
-    if (result.kind !== "unsupported") return;
-    expect(result.reason).toContain("without options");
+    expect(result.kind).toBe("success");
+    if (result.kind !== "success") return;
+    expect(result.newSource).toContain("name=__tikz_bench_semantic");
   });
 
-  it("refuses ungroup when scope options contain unsupported option syntax", () => {
+  it("preserves unknown scope options without guessing their semantics", () => {
     const source = String.raw`\begin{tikzpicture}
   \begin{scope}[{bad option}]
     \draw (0,0) -- (1,0);
@@ -1024,9 +1024,9 @@ describe("applyEditAction – group/ungroup", () => {
       elementIds: ["scope:0"]
     });
 
-    expect(result.kind).toBe("unsupported");
-    if (result.kind !== "unsupported") return;
-    expect(result.reason).toContain("without options");
+    expect(result.kind).toBe("success");
+    if (result.kind !== "success") return;
+    expect(result.newSource).toContain("name=__tikz_bench_semantic");
   });
 
   it("rejects invalid ungroup selections and non-scope statements", () => {
@@ -1039,7 +1039,7 @@ describe("applyEditAction – group/ungroup", () => {
       elementIds: []
     })).toEqual({
       kind: "unsupported",
-      reason: "Ungroup currently requires exactly one selected scope."
+      reason: "Select a group to ungroup."
     });
 
     expect(applyEditAction(source, [], {
@@ -1094,6 +1094,6 @@ describe("applyEditAction – group/ungroup", () => {
     const parsed = parseTikz(source, { recover: true });
     const scopes = parsed.figure.body.filter((statement) => statement.kind === "Scope");
 
-    expect(scopes.map((scope) => isUngroupableScopeStatement(scope))).toEqual([true, false]);
+    expect(scopes.map((scope) => isUngroupableScopeStatement(scope))).toEqual([true, true]);
   });
 });

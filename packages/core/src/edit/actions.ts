@@ -15,6 +15,7 @@ import {
   type ElementTemplate
 } from "./element-templates.js";
 import { resolvePropertyTarget } from "./property-target.js";
+import { shapeAnchorNodeSource } from "./shape-anchor-node.js";
 import type { AlignMode, DistributeAxis } from "./arrange.js";
 import {
   applyTextReplacements,
@@ -110,7 +111,7 @@ export { PROPERTY_WRITE_CLEANUP_NOOP_REASON };
 export type EditAction =
   | { kind: "moveElement"; elementId: string; delta: WorldPoint; formatPrecision?: DragFormatPrecision }
   | { kind: "moveElements"; elementIds: string[]; delta: WorldPoint; formatPrecision?: DragFormatPrecision }
-  | { kind: "alignElements"; elementIds: string[]; mode: AlignMode }
+  | { kind: "alignElements"; elementIds: string[]; mode: AlignMode; referenceBounds?: WorldBounds }
   | { kind: "distributeElements"; elementIds: string[]; axis: DistributeAxis }
   | { kind: "moveHandle"; handleId: string; newWorld: WorldPoint }
   | { kind: "connectHandle"; handleId: string; nodeName: string; nodeSourceId?: string; anchor: string }
@@ -179,6 +180,7 @@ export type EditAction =
   | { kind: "transposeMatrix"; matrixSourceId: string }
   | {
       kind: "resizeElement";
+      scaleContents?: boolean;
       elementId: string;
       role: ResizeRole;
       newWorld: WorldPoint;
@@ -656,7 +658,11 @@ function ensureNodeSourceHasName(
   }
   const node = findNodeItemForSourceId(ref.statement, nodeSourceId);
   if (!node) {
-    return null;
+    const name = nextGeneratedNodeName(source);
+    const replacement = shapeAnchorNodeSource(source, ref.statement, name, parseOptions);
+    if (!replacement) return null;
+    return { source: source.slice(0, ref.span.from) + replacement + source.slice(ref.span.to), name,
+      insertedSpan: ref.span, insertedLength: replacement.length - (ref.span.to - ref.span.from) };
   }
   const existingName = node.name?.trim();
   if (existingName) {

@@ -28,10 +28,11 @@ export function planAlignDeltas(
   boundsBySource: ReadonlyMap<string, WorldBounds>,
   selectedSourceIds: readonly string[],
   mode: AlignMode,
-  epsilon: number = DEFAULT_EPSILON
+  epsilon: number = DEFAULT_EPSILON,
+  referenceBounds?: WorldBounds
 ): ArrangePlanResult {
   const normalized = normalizeSourceIds(selectedSourceIds);
-  if (normalized.length < 2) {
+  if (normalized.length < (referenceBounds ? 1 : 2)) {
     return { kind: "unsupported", reason: "Align requires at least 2 selected elements." };
   }
 
@@ -40,7 +41,7 @@ export function planAlignDeltas(
     return selectedBounds;
   }
 
-  const selectionBounds = mergeSourceBounds(selectedBounds.value);
+  const selectionBounds = referenceBounds ?? mergeSourceBounds(selectedBounds.value);
   const deltas = new Map<string, WorldPoint>();
 
   for (const entry of selectedBounds.value) {

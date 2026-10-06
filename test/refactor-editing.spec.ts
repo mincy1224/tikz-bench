@@ -30,6 +30,8 @@ describe("multipart source editing", () => {
   });
   it("retains transparent slots when another partition changes color", () => {
     const changed = updateNodePartFill(source, nodeId(), 2, "blue!15");
+    expect(changed).toContain("rectangle split uses custom fill");
+    expect(changed).not.toContain("rectangle split use custom fill");
     expect(changed).toContain("white,none,blue!15");
     const result = evaluateSemantic(changed);
     expect(result.scene.elements.some((element) => element.style.fill === "#d9d9ff")).toBe(true);
@@ -38,6 +40,12 @@ describe("multipart source editing", () => {
     const texts = evaluateSemantic(source).scene.elements.filter((element) => element.kind === "Text");
     expect(texts.map((element) => source.slice(element.textSourceSpan!.from, element.textSourceSpan!.to))).toEqual(["First", "Second", "Third"]);
     expect(texts[1].style.fontSize).toBeLessThan(texts[0].style.fontSize);
+  });
+  it("removes the formerly emitted misspelled key when editing fill", () => {
+    const legacy = source.replace("rectangle split parts=3", "rectangle split parts=3,rectangle split use custom fill");
+    const changed = updateNodePartFill(legacy, nodeId(), 0, "green");
+    expect(changed).not.toContain("rectangle split use custom fill");
+    expect(changed).toContain("rectangle split uses custom fill");
   });
 });
 describe("structured arrow sizes", () => {

@@ -56,9 +56,13 @@ describe("release installer lifecycle in an isolated filesystem", () => {
       await put("package/manifest.json", JSON.stringify({ schema: 1, version: "0.6.1" }));
       await put("package/apps/server/dist/index.js", "different new program");
       await put("package/SHA256SUMS", (await Promise.all(files.map(async (file) => `${createHash("sha256").update(await readFile(path.join(directory, "package", file))).digest("hex")}  ${file}`))).join("\n") + "\n");
+      const previousConfig = await readFile(path.join(directory, "etc/default/tikz-bench"), "utf8");
+      const previousCli = await readFile(path.join(directory, "bin/tikz-bench"), "utf8");
       const failed = run(true); expect(failed.status).not.toBe(0);
       expect(await readFile(path.join(directory, "opt/current/apps/server/dist/index.js"), "utf8")).toBe("new program");
       expect(await readFile(path.join(directory, "data/tikz-bench.sqlite"), "utf8")).toBe("existing project data");
+      expect(await readFile(path.join(directory, "etc/default/tikz-bench"), "utf8")).toBe(previousConfig);
+      expect(await readFile(path.join(directory, "bin/tikz-bench"), "utf8")).toBe(previousCli);
       await access(path.join(directory, "active"));
       let manager = await readFile("scripts/manage-release.sh", "utf8");
       manager = manager.replaceAll("/opt/tikz-bench", `${root}/opt`).replaceAll("/var/lib/tikz-bench", `${root}/data`).replaceAll("/run/lock", `${root}/locks`).replaceAll("/etc/default", `${root}/etc/default`).replace('[[ $EUID == 0 ]]', 'true');

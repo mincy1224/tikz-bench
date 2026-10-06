@@ -14,7 +14,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   ...makeInitialState(loadWorkspaceSeed() ?? undefined),
   dispatch: (action: EditorAction) => { set((state) => {
     const next = editorReducer(state, action);
-    if (shouldSaveWorkspace(state, next)) {
+    if (action.type !== "SET_SOURCE_TRANSIENT" && shouldSaveWorkspace(state, next)) {
       const workspaceState = workspaceStateFromEditorState(next);
       if (shouldDebounceWorkspaceSave(action, state, next)) {
         scheduleWorkspaceSave(workspaceState);

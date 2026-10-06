@@ -3,9 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { ServerConfig } from "../config.js";
+import { extractObjectMarkers, type ObjectMarker } from "./object-markers.js";
 
 export type LatexDiagnostic = { file: string; line: number; message: string };
-export type CompileResult = { svg: string; log: string; diagnostics: LatexDiagnostic[] };
+export type CompileResult = { svg: string; log: string; diagnostics: LatexDiagnostic[]; markers: ObjectMarker[] };
 export type PdfCompileResult = { pdf: Buffer; log: string; diagnostics: LatexDiagnostic[] };
 export type CompileProfile = "auto" | "latex" | "xelatex";
 
@@ -112,7 +113,7 @@ export async function compileLatex(source: string, config: ServerConfig, request
     if (svg.code !== 0) throw new Error(svg.output || "dvisvgm conversion failed.");
     const output = await readFile(path.join(directory, "output.svg"), "utf8");
     assertSafeSvg(output);
-    return { svg: output, log, diagnostics };
+    return { svg: output, log, diagnostics, markers: extractObjectMarkers(output) };
   } finally {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
@@ -125,7 +126,8 @@ export function createStandaloneDocument(source: string, requestedProfile: Compi
     /\\begin\{forest\}/u.test(source) ? "\\usepackage{forest}" : "",
     /\\begin\{(?:axis|groupplot|semilogxaxis|semilogyaxis|loglogaxis)\}/u.test(source) ? "\\usepackage{pgfplots}\n\\pgfplotsset{compat=1.18}\n\\usepgfplotslibrary{statistics,groupplots}" : "",
     /\\begin\{circuitikz\}/u.test(source) ? "\\usepackage{circuitikz}" : ""].filter(Boolean).join("\n");
-  return `\\documentclass[tikz,border=2pt]{standalone}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta,shapes,shapes.multipart,shapes.callouts,positioning,calc,matrix,fit,backgrounds,decorations.pathmorphing,decorations.markings,intersections,quotes}\n${extras}\n\\begin{document}\n${source}\n\\end{document}\n`;
+  const content = /\\begin\{(?:tikzpicture|forest|circuitikz)\}/u.test(source) ? source : `\\begin{tikzpicture}\n${source}\n\\end{tikzpicture}`;
+  return `\\documentclass[tikz,border=2pt]{standalone}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta,shapes,shapes.multipart,shapes.callouts,positioning,calc,matrix,fit,backgrounds,decorations.pathmorphing,decorations.markings,intersections,quotes}\n${extras}\n\\begin{document}\n${content}\n\\end{document}\n`;
 }
 
 export async function compileLatexPdf(source: string, config: ServerConfig, requestedProfile: CompileProfile = "auto"): Promise<PdfCompileResult> {

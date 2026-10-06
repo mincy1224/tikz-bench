@@ -35,7 +35,7 @@ export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
   },
   gaps: {
     enabled: true,
-    maxPairsPerAxis: 100000
+    maxPairsPerAxis: 2000
   },
   bypassWithCtrlOrMeta: true,
   viewportPaddingPx: px(12)
@@ -144,6 +144,7 @@ export type SelectionGeometry = {
 
 export type BuildSnapContextInput = {
   sceneElements: SceneElement[];
+  referenceBounds?: ReadonlyMap<string, WorldBounds>;
   selectedSourceIds: readonly string[];
   zoom: number;
   viewportWorld?: WorldBounds | null;

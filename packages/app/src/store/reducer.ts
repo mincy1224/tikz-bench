@@ -514,6 +514,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           history: [],
           historyIndex: -1,
           activeHandleId: null,
+          selectedElementIds: new Set([...doc.selectedElementIds].filter((id) => !id.startsWith("advanced:"))),
           dirty: action.source !== doc.savedSource,
           externalChangeStatus: doc.externalChangeStatus === "none" ? "none" : doc.externalChangeStatus
         };
@@ -950,14 +951,15 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     }
 
     case "COMMIT_PROPERTY_SOURCE": {
-      const doc = readDocument(workspace.documents, activeId);
+      const documentId = activeDocumentIdFromAction(state, action.documentId);
+      const doc = readDocument(workspace.documents, documentId);
       if (doc?.source !== action.expectedSource || doc.assistantLockReason) return state;
       const before = doc.propertyPreviewBaseSource ?? doc.source;
       const truncated = doc.history.slice(0, doc.historyIndex + 1);
       const history: HistoryEntry[] = before === action.source ? truncated : [...truncated, {
-        kind: "set-property", label: "修改格式", forward: [], backward: [], sourceBefore: before, sourceAfter: action.source
+        kind: "set-property", label: action.label ?? "修改格式", forward: [], backward: [], sourceBefore: before, sourceAfter: action.source
       }];
-      workspace = updateDocument(workspace, activeId, (current) => ({ ...current,
+      workspace = updateDocument(workspace, documentId, (current) => ({ ...current,
         source: action.source,
         propertyPreviewBaseSource: undefined, sourceRevision: current.sourceRevision + 1,
         lastEditChangedSourceIds: null, lastEditPatches: null, lastEditPatchBaseRevision: null,

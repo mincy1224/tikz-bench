@@ -1,6 +1,7 @@
 import type { FeatureId } from "./feature-ids.js";
 
 export const parserFeatureRegistry = [
+  "advanced_forest_source", "advanced_pgfplots_source", "advanced_circuitikz_source",
   "path_statement",
   "scope_statement",
   "foreach_statement",
@@ -271,6 +272,7 @@ export const svgFeatureRegistry = [
 ] as const satisfies readonly FeatureId[];
 
 export const editFeatureRegistry = [
+  "advanced_forest_source", "advanced_pgfplots_source", "advanced_circuitikz_source",
   "path_statement",
   "scope_statement",
   "options_structured",

@@ -2049,7 +2049,7 @@ export function App({ project }: AppProps = {}) {
         />
       )}
       {/\\begin\{(?:forest|axis|groupplot|semilogxaxis|semilogyaxis|loglogaxis|circuitikz)\}/u.test(source) ? <div className={css.compileNotice} role="status">
-        <span>此文档包含高级 TeX 组件。原生画布可编辑范围有限，请用编译预览检查完整结果。</span>
+        <span>高级组件使用本地 TeX 自动更新主画布；编译失败时保留源码与最后成功画面。</span>
         <button type="button" onClick={handleShowCompiledPictureCommand}>LaTeX 编译预览</button>
       </div> : null}
       <Toolbar

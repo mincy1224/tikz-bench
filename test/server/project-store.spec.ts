@@ -11,6 +11,21 @@ beforeEach(async () => { directory = await mkdtemp(path.join(os.tmpdir(), "tikz-
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
 describe("TikZ Bench project store", () => {
+  it("rejects concurrent duplicate names and permits reuse after deletion", async () => {
+    const config = { ...loadConfig([]), databasePath: path.join(directory, "unique.sqlite") };
+    await initializeProjectStore(config);
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => createProject(config, "  Same  ", "", " description ")));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(7);
+    await expect(createProject(config, "   ")).rejects.toMatchObject({ code: "invalid_name" });
+    const project = (await listProjects(config))[0];
+    expect(project.description).toBe("description");
+    expect(await updateProject(config, project.id, { source: project.source, expectedRevision: 1 })).toMatchObject({ revision: 1 });
+    const other = await createProject(config, "same");
+    await expect(updateProject(config, other.id, { name: "Same" })).rejects.toMatchObject({ code: "duplicate_name" });
+    await softDeleteProject(config, project.id);
+    expect((await createProject(config, "Same")).name).toBe("Same");
+  });
   it("creates, saves with optimistic revisions, and soft-deletes projects", async () => {
     const config = { ...loadConfig([]), databasePath: path.join(directory, "projects.sqlite") };
     await initializeProjectStore(config);

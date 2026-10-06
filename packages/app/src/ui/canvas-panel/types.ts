@@ -1,3 +1,4 @@
+import type { SourceEditTransaction } from "../../store/source-edit-transaction";
 import type { AdornmentOwnerGeometry, Span, Statement } from "tikz-editor/ast/types";
 import type { ComplexPathSegment } from "tikz-editor/edit/element-templates";
 import type { EditAction, ResizeRole } from "tikz-editor/edit/actions";
@@ -116,6 +117,8 @@ export type MagnifierState = {
 export type DragState =
   | {
       kind: "element";
+      transaction?: SourceEditTransaction;
+      baselineHandles?: EditHandle[];
       pointerId: number;
       elementIds: string[];
       startWorld: WorldPoint;
@@ -153,6 +156,7 @@ export type DragState =
     }
   | {
       kind: "resize";
+      transaction?: SourceEditTransaction;
       pointerId: number;
       elementId: string;
       role: ResizeRole;
