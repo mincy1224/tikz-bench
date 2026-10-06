@@ -13,7 +13,7 @@ export function paintObject(id: string): boolean {
   const state = useEditorStore.getState();
   if (painter.documentId !== state.activeDocumentId) { painter.set(null, null); return false; }
   try {
-    const object = editableObjects(state.source, state.snapshot.scene?.elements).find((candidate) => candidate.id === id);
+    const object = editableObjects(state.source, state.snapshot.scene?.elements, new Set([id]), state.snapshot.parseResult)[0];
     if (!object || object.type === "group") throw new Error("此对象不支持格式刷；组合请先选择内部对象。");
     const source = applyFormat(state.source, object, painter.snapshot);
     state.dispatch({ type: "COMMIT_PROPERTY_SOURCE", source, expectedSource: state.source, label: "格式刷" });
@@ -34,7 +34,7 @@ export function FormatPainterButton() {
     style={{ border: "1px solid var(--color-border, #aaa)", borderRadius: 5, padding: "5px 9px", background: painter.snapshot ? "#dbeafe" : "transparent", color: painter.snapshot ? "#174da3" : "inherit" }}
     onClick={() => {
       if (painter.snapshot) { painter.set(null, null); return; }
-      const object = editableObjects(state.source, state.snapshot.scene?.elements).find((candidate) => candidate.id === selected[0]);
+      const object = editableObjects(state.source, state.snapshot.scene?.elements, new Set(selected), state.snapshot.parseResult)[0];
       if (!object || object.type === "group") { painter.set(null, null, "请选择具体组件，组合不支持整体刷。"); return; }
       const snapshot = captureFormat(object);
       painter.set(snapshot, state.activeDocumentId, snapshot.skipped.length ? `已跳过 ${snapshot.skipped.join("、")}` : "点击同类型组件应用格式");

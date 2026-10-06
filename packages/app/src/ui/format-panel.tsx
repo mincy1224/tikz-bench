@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { editableObjects, fontWithSize, setObjectProperty, tikzColor, type EditableObject } from "tikz-editor/edit/editable-objects";
 import { advancedObject, editForestStructure, setAdvancedContent } from "tikz-editor/edit/advanced-objects";
 import { applyEditAction, type EditAction } from "tikz-editor/edit/actions";
@@ -79,8 +79,7 @@ export function FormatPanel() {
   const [alignToCanvas, setAlignToCanvas] = useState(false);
   const [tab, setTab] = useState<"shape" | "text">("shape"); const [error, setError] = useState("");
   const painterMessage = useFormatPainter((painter) => painter.message);
-  const objects = editableObjects(state.source, state.snapshot.scene?.elements);
-  const selected = objects.filter((object) => state.selectedElementIds.has(object.id));
+  const selected = useMemo(() => editableObjects(state.source, state.snapshot.scene?.elements, state.selectedElementIds, state.snapshot.parseResult), [state.source, state.snapshot.scene?.elements, state.selectedElementIds, state.snapshot.parseResult]);
   const key = `${state.activeDocumentId}:${selected.map((object) => object.id).join(",")}`;
   const single = selected.length === 1 ? selected[0] : null;
   const common = (property: string, fallback?: string): string | null => {
@@ -99,8 +98,8 @@ export function FormatPanel() {
     selection = result.selectedSourceIds;
     return result.newSource;
   }, "排列"); if (selection) state.dispatch({ type: "SELECT_RANGE", ids: selection }); };
-  const parts = single ? getEditableNodeParts(state.source, single.id) : null;
-  const descriptors = selected.flatMap((object) => object.element ? [getInspectorDescriptor(object.element, { source: state.source, editHandles: state.snapshot.editHandles })] : []);
+  const parts = useMemo(() => single ? getEditableNodeParts(state.source, single.id) : null, [state.source, single]);
+  const descriptors = useMemo(() => selected.flatMap((object) => object.element ? [getInspectorDescriptor(object.element, { source: state.source, editHandles: state.snapshot.editHandles })] : []), [selected, state.source, state.snapshot.editHandles]);
   const allArrowFields = descriptors.flatMap((descriptor) => descriptor.sections.flatMap((section) => section.properties)).filter((property) => property.kind === "arrowTip");
   const arrowFields = allArrowFields.filter((field, index) => allArrowFields.findIndex((candidate) => candidate.side === field.side) === index);
   return <SidePanel><SidePanel.Header>设置格式{selected.length ? ` · ${selected.length > 1 ? `${selected.length} 个对象` : single?.label}` : ""}</SidePanel.Header>

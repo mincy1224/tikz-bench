@@ -1,8 +1,9 @@
 import type { SceneElement } from "../semantic/types.js";
 import { resolveNodeShape } from "../semantic/nodes/options.js";
 import type { NodeItem, Span, Statement } from "../ast/types.js";
+import type { ParseTikzResult } from "../parser/index.js";
 import { parseTikzForEdit } from "./parse-options.js";
-import { resolvePropertyTarget } from "./property-target.js";
+import { resolvePropertyTarget, resolvePropertyTargetFromParseResult } from "./property-target.js";
 import { applyEditAction } from "./actions.js";
 import { advancedObject, advancedOptionValues, advancedEffectiveOptions, parseAdvancedObjects, setAdvancedOption, type AdvancedObject } from "./advanced-objects.js";
 
@@ -25,42 +26,51 @@ export function sourceNode(source: string, id: string): NodeItem | undefined {
   };
   return visit(parseTikzForEdit(source).figure.body);
 }
-export function editableObjects(source: string, elements: readonly SceneElement[] = []): EditableObject[] {
+export function editableObjects(source: string, elements: readonly SceneElement[] = [], selectedIds?: ReadonlySet<string>, parseResult?: ParseTikzResult | null): EditableObject[] {
+  if (selectedIds?.size === 0) return [];
   const advanced = parseAdvancedObjects(source);
-  const objects: EditableObject[] = advanced.objects.map((object) => {
+  const objects: EditableObject[] = advanced.objects.filter((object) => !selectedIds || selectedIds.has(object.id)).map((object) => {
     const properties = advancedEffectiveOptions(source, object);
     if (object.content) properties.set("content", source.slice(object.content.from, object.content.to));
     return { ...object, type: object.family === "forest" ? `forest:${shapeName(properties)}` : object.type, properties, advanced: object };
   });
-  const parsed = parseTikzForEdit(source);
+  const parsed = parseResult?.source === source ? parseResult : parseTikzForEdit(source);
+  const nodes = new Map<string, NodeItem>();
   const visitScopes = (statements: typeof parsed.figure.body) => {
     for (const statement of statements) {
+      if (statement.kind === "Path") {
+        for (const item of statement.items) if (item.kind === "Node") {
+          nodes.set(item.id, item);
+          if (statement.command === "node" && !nodes.has(statement.id)) nodes.set(statement.id, item);
+        }
+      }
       if (statement.kind !== "Scope") continue;
       const properties = new Map<string, string>();
       for (const entry of statement.options?.entries ?? []) if (entry.kind !== "unknown") properties.set(entry.key, entry.kind === "kv" ? entry.valueRaw : "true");
-      if (properties.get("name") !== "__tikz_bench_semantic") objects.push({ id: statement.id, type: "group", label: "组合", span: statement.span, children: statement.body.map((child) => child.id), properties });
+      if (properties.get("name") !== "__tikz_bench_semantic" && (!selectedIds || selectedIds.has(statement.id))) objects.push({ id: statement.id, type: "group", label: "组合", span: statement.span, children: statement.body.map((child) => child.id), properties });
       visitScopes(statement.body);
     }
   };
   visitScopes(parsed.figure.body);
+  const textElements = new Map(elements.filter((element) => element.kind === "Text").map((element) => [element.sourceRef.sourceId, element]));
   const seen = new Set<string>();
   for (const element of elements) {
     const id = element.sourceRef.sourceId;
-    if (seen.has(id) || element.adornment) continue;
-    const target = resolvePropertyTarget(source, id);
+    if (seen.has(id) || element.adornment || selectedIds && !selectedIds.has(id)) continue;
+    const target = resolvePropertyTargetFromParseResult(source, parsed, id);
     if (target.kind !== "found") continue;
     const properties = new Map<string, string>();
     for (const entry of target.target.options?.entries ?? []) if (entry.kind !== "unknown") properties.set(entry.key, entry.kind === "kv" ? entry.valueRaw : "true");
-    const node = sourceNode(source, id);
+    const node = nodes.get(id);
     for (const entry of node?.options?.entries ?? []) if (entry.kind !== "unknown") properties.set(entry.key, entry.kind === "kv" ? entry.valueRaw : "true");
-    const isNode = element.kind === "Text" || Boolean(node) || elements.some((candidate) => candidate.sourceRef.sourceId === id && candidate.kind === "Text");
+    const isNode = element.kind === "Text" || Boolean(node) || textElements.has(id);
     const shape = isNode ? (node?.options ? resolveNodeShape(node.options) : shapeName(properties)) : element.kind === "Path" ? element.shapeHint ?? (element.commands.some((command) => command.kind === "C") ? "curve" : "line") : element.kind.toLowerCase();
     if (isNode) properties.set("supports-text", "true");
     if (element.style.fillPattern) properties.set("fill-mode", "pattern");
     properties.set("resolved-fill", element.style.fill ?? "none");
     properties.set("resolved-draw", element.style.stroke ?? "none");
     properties.set("resolved-text", element.style.textColor ?? element.style.stroke ?? "black");
-    const textElement = elements.find((candidate) => candidate.sourceRef.sourceId === id && candidate.kind === "Text");
+    const textElement = textElements.get(id);
     const explicitSize = /\\fontsize\s*\{([^}]+)\}/u.exec(properties.get("font") ?? "")?.[1];
     properties.set("resolved-size", explicitSize ?? String(Number((textElement?.style.fontSize ?? element.style.fontSize).toFixed(2))));
     properties.set("resolved-line-width", String(element.style.lineWidth));

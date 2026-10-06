@@ -116,6 +116,9 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
     dragIds: string[];
     moved: boolean;
     dragStarted: boolean;
+    drillOnClick?: boolean;
+    startWorld?: WorldPoint;
+    adornmentDragFromText?: boolean;
   } | null>(null);
   const pendingTextInteractionRef = useRef<{
     pointerId: number;
@@ -282,7 +285,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       if (!world) {
         return;
       }
-      startElementDrag(event.pointerId, world, pending.dragIds);
+      startElementDrag(event.pointerId, pending.startWorld ?? world, pending.dragIds, { adornmentDragFromText: pending.adornmentDragFromText });
       pending.dragStarted = true;
     }
 
@@ -292,6 +295,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         return;
       }
       pendingScopeDrillRef.current = null;
+      if (pending.drillOnClick === false) return;
       if (pending.moved) {
         return;
       }
@@ -562,7 +566,20 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         isAdornmentTarget &&
         region?.shape === "rect" &&
         typeof region.sceneTextKey === "string";
-      startElementDrag(event.pointerId, world, draggedIds, { adornmentDragFromText });
+      // A click only selects. Build snapping and fresh drag handles once the
+      // pointer actually moves, rather than evaluating the document on every click.
+      pendingScopeDrillRef.current = {
+        pointerId: event.pointerId,
+        startClient: clientPoint,
+        selectedScopeId: resolvedTargetId,
+        hitSourceId,
+        dragIds: draggedIds,
+        moved: false,
+        dragStarted: false,
+        drillOnClick: false,
+        startWorld: world,
+        adornmentDragFromText
+      };
     },
     [
       beginCanvasTextInteraction,
@@ -579,7 +596,6 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       setExpandedDensePathSourceId,
       setSnapLines,
       closeTextEditingSession,
-      startElementDrag,
       scopeOverlay,
       snapshot.editHandles,
       svgResult,
