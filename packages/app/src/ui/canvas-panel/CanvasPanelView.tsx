@@ -702,6 +702,7 @@ export function CanvasPanelView(props: CanvasPanelViewProps) {
                   viewBox={svgResult.viewBox}
                 />
 
+                <g data-element-drag-overlay="true">
                 <SelectionOverlay
                   marqueeBounds={marqueeBounds}
                   selectionBoxes={selectionBoxes}
@@ -768,6 +769,7 @@ export function CanvasPanelView(props: CanvasPanelViewProps) {
                     onRotateHandlePointerDown={onRotateHandlePointerDown}
                   />
                 )}
+                </g>
               </svg>
             </div>
           )}

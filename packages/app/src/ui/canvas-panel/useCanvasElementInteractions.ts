@@ -1,5 +1,7 @@
 import { parseTikzForEdit } from "tikz-editor/edit/parse-options";
 import { evaluateTikzFigure } from "tikz-editor/semantic/evaluate";
+import { prepareTranslation } from "tikz-editor/edit/prepared-translation";
+import { createElementTranslationPreview } from "./element-translation-preview";
 import { useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { clientPoint, px, pt, worldBounds, worldVector } from "tikz-editor/coords/index";
 import { buildSnapContext, collectSelectionGeometryFromBounds, collectSourceWorldBounds, type SnapBounds, type SnapGuideInput, type SnapLine, type SnapSettingsPatch } from "tikz-editor/edit/snapping";
@@ -215,10 +217,15 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
 
       const transaction = new SourceEditTransaction("移动");
       const baseline = parseTikzForEdit(transaction.base, { activeFigureId });
+      const baselineSemantic = evaluateTikzFigure(baseline.figure, transaction.base);
+      const baselineHandles = baselineSemantic.editHandles;
+      const translation = prepareTranslation(transaction.base, baselineHandles, draggedIds, { activeFigureId });
       setDragState({
         kind: "element",
         transaction,
-        baselineHandles: evaluateTikzFigure(baseline.figure, transaction.base).editHandles,
+        baselineHandles,
+        translation,
+        visualTranslation: translation ? createElementTranslationPreview(viewportRef.current, translation, baselineHandles, baselineSemantic.dependencies, baselineSemantic.scene.elements) : null,
         pointerId,
         elementIds: draggedIds,
         startWorld: world,
@@ -261,7 +268,8 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       snapshot.parseResult?.figure.body,
       snapshot.source,
       source,
-      viewportWorldBounds
+      viewportWorldBounds,
+      viewportRef
     ]
   );
 

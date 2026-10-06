@@ -1,5 +1,6 @@
 import type { EditActionResultLike } from "../result-types.js";
 import { followingAnchorHandleIds } from "../anchored-selection.js";
+import { prepareTranslation } from "../prepared-translation.js";
 import type { CoordinateItem, NodeItem, PathItem, PathStatement, Span, Statement } from "../../ast/types.js";
 import { pt } from "../../coords/scalars.js";
 import type { OptionEntry } from "../../options/types.js";
@@ -957,6 +958,11 @@ function applyElementDeltaMapStrict(
   }
 
   if (normalizedIds.some((id) => id.startsWith("scope:"))) {
+    const prepared = prepareTranslation(source, editHandles, normalizedIds, parseOptions);
+    if (prepared) {
+      const result = prepared.apply(deltasBySource);
+      return result.source === source ? { kind: "unsupported", reason: "Arrange operation would not change the source." } : { kind: "success", newSource: result.source, patches: result.patches, changedSourceIds: normalizedIds };
+    }
     let next = source;
     const patches: SourcePatch[] = [];
     for (const id of normalizedIds) {

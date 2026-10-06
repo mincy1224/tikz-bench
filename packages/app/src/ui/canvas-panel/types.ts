@@ -1,4 +1,6 @@
 import type { SourceEditTransaction } from "../../store/source-edit-transaction";
+import type { PreparedTranslation } from "tikz-editor/edit/prepared-translation";
+import type { ElementTranslationPreview } from "./element-translation-preview";
 import type { AdornmentOwnerGeometry, Span, Statement } from "tikz-editor/ast/types";
 import type { ComplexPathSegment } from "tikz-editor/edit/element-templates";
 import type { EditAction, ResizeRole } from "tikz-editor/edit/actions";
@@ -119,6 +121,8 @@ export type DragState =
       kind: "element";
       transaction?: SourceEditTransaction;
       baselineHandles?: EditHandle[];
+      translation?: PreparedTranslation | null;
+      visualTranslation?: ElementTranslationPreview | null;
       pointerId: number;
       elementIds: string[];
       startWorld: WorldPoint;

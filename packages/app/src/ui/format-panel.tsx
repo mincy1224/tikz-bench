@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { editableObjects, fontWithSize, setObjectProperty, tikzColor, type EditableObject } from "tikz-editor/edit/editable-objects";
 import { advancedObject, editForestStructure, setAdvancedContent } from "tikz-editor/edit/advanced-objects";
 import { applyEditAction, type EditAction } from "tikz-editor/edit/actions";
@@ -74,7 +74,13 @@ function Field({ label, value, write, unit, multiline = false, allowNegative = f
 }
 
 export function FormatPanel() {
-  const state = useEditorStore();
+  const inspection = useRef(useEditorStore.getState());
+  // Dragging does not change formatting. Keep the inspector's committed view
+  // while the canvas previews, rather than rebuilding every field each frame.
+  const state = useEditorStore(useCallback((next) => {
+    if (next.activeCanvasDragKind !== "element" || next.activeDocumentId !== inspection.current.activeDocumentId) inspection.current = next;
+    return inspection.current;
+  }, []));
   const resize = useResizePreference();
   const [alignToCanvas, setAlignToCanvas] = useState(false);
   const [tab, setTab] = useState<"shape" | "text">("shape"); const [error, setError] = useState("");

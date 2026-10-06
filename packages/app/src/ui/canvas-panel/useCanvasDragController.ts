@@ -1,5 +1,6 @@
 import { useResizePreference } from "../resize-preference";
 import { useEffect, useRef } from "react";
+import type { ElementTranslationPreview } from "./element-translation-preview";
 import type { AdornmentOwnerGeometry } from "tikz-editor/ast/types";
 import {
   applyFrameTransform,
@@ -141,6 +142,29 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     onSnapFeedback
   } = params;
   const wasSnappedRef = useRef(false);
+  const pointerFrame = useRef<number | null>(null);
+  const pendingPointer = useRef<PointerEvent | null>(null);
+  const latestMoveHandler = useRef<((event: PointerEvent) => void) | null>(null);
+  const committedVisual = useRef<{ preview: ElementTranslationPreview; source: string } | null>(null);
+  useEffect(() => {
+    const pending = committedVisual.current;
+    if (pending && (snapshotSource === pending.source || source !== pending.source)) { pending.preview.restore(); committedVisual.current = null; }
+  }, [snapshotSource, source]);
+  useEffect(() => {
+    const drag = dragRef.current;
+    if (drag?.kind !== "element" || !drag.visualTranslation || !drag.transaction || source === drag.transaction.base || committedVisual.current?.preview === drag.visualTranslation) return;
+    if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
+    pointerFrame.current = null; pendingPointer.current = null;
+    drag.visualTranslation.restore(); drag.transaction.finish(true);
+    setDragState(null); setSnapLines([]);
+  }, [source, dragRef, setDragState, setSnapLines]);
+  useEffect(() => () => {
+    if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
+    pointerFrame.current = null; pendingPointer.current = null;
+    committedVisual.current?.preview.restore(); committedVisual.current = null;
+    const drag = dragRef.current;
+    if (drag?.kind === "element") { drag.visualTranslation?.restore(); drag.transaction?.finish(true); }
+  }, [dragRef]);
 
   useEffect(() => {
     function sameIdsAsCurrentSelection(ids: readonly string[]): boolean {
@@ -273,7 +297,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
       return Math.abs(a.x - b.x) > SNAP_FEEDBACK_EPSILON || Math.abs(a.y - b.y) > SNAP_FEEDBACK_EPSILON;
     }
 
-    function onWorldPointerMove(event: PointerEvent) {
+    function processWorldPointerMove(event: PointerEvent) {
       const drag = dragRef.current;
       if (event.pointerId !== drag?.pointerId) return;
       const ctrlOrMeta = event.ctrlKey || event.metaKey;
@@ -865,8 +889,14 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         }
 
         if (drag.transaction && drag.baselineHandles) {
+          if (drag.visualTranslation) {
+            drag.visualTranslation.move(totalDelta.x, totalDelta.y);
+            drag.lastAppliedTotalDelta = totalDelta;
+            return;
+          }
           try {
             drag.transaction.preview((base) => {
+              if (drag.translation) return drag.translation.apply(new Map(drag.elementIds.map((id) => [id, makeWorldPoint(totalDelta.x, totalDelta.y)]))).source;
               const result = applyEditAction(base, drag.baselineHandles ?? [], {
                 kind: "moveElements", elementIds: drag.elementIds, delta: makeWorldPoint(totalDelta.x, totalDelta.y), formatPrecision
               }, { parseOptions: { sourceFingerprint: drag.baselineHandles?.[0]?.sourceRef.sourceFingerprint } });
@@ -965,6 +995,10 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     function onWorldPointerUp(event: PointerEvent) {
       const drag = dragRef.current;
       if (event.pointerId !== drag?.pointerId) return;
+      if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
+      pointerFrame.current = null;
+      const pending = pendingPointer.current; pendingPointer.current = null;
+      if (event.type !== "pointercancel" && pending) processWorldPointerMove(pending);
       resetSnapFeedbackState();
       suppressNextBackgroundClickRef.current = true;
       const ctrlOrMeta = event.ctrlKey || event.metaKey;
@@ -1229,7 +1263,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         }
       }
 
-      const cleanupElementIds = propertyCleanupElementIdsForDrag(drag);
+      const cleanupElementIds = drag.kind === "element" && drag.translation ? [] : propertyCleanupElementIdsForDrag(drag);
       if ("historyMergeKey" in drag && typeof drag.historyMergeKey === "string" && cleanupElementIds.length > 0) {
         dispatch({
           type: "APPLY_EDIT_ACTION",
@@ -1239,6 +1273,19 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         });
       }
 
+      if (drag.kind === "element" && drag.visualTranslation && drag.translation && drag.transaction) {
+        if (event.type === "pointercancel") drag.visualTranslation.restore();
+        else {
+          try {
+            const final = drag.translation.apply(new Map(drag.elementIds.map((id) => [id, makeWorldPoint(drag.lastAppliedTotalDelta.x, drag.lastAppliedTotalDelta.y)]))).source;
+            if (drag.transaction.preview(() => final)) {
+              if (final === snapshotSource) drag.visualTranslation.restore();
+              else committedVisual.current = { preview: drag.visualTranslation, source: final };
+            }
+            else drag.visualTranslation.restore();
+          } catch (error) { drag.visualTranslation.restore(); setWarning(error instanceof Error ? error.message : String(error)); }
+        }
+      }
       if (drag.kind === "element" || drag.kind === "resize") drag.transaction?.finish(event.type === "pointercancel");
       setNodeAnchorOverlay(null);
       setSnapLines([]);
@@ -1275,6 +1322,9 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     function onWorldKeyDown(event: KeyboardEvent) {
       const drag = dragRef.current;
       if (event.key === "Escape" && (drag?.kind === "element" || drag?.kind === "resize") && drag.transaction) {
+        if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
+        pointerFrame.current = null; pendingPointer.current = null;
+        if (drag.kind === "element") drag.visualTranslation?.restore();
         drag.transaction.finish(true); setDragState(null); setSnapLines([]); event.preventDefault(); return;
       }
       if (event.repeat) {
@@ -1287,6 +1337,16 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
       applyRotateModifierKeyTransition(event, false);
     }
 
+    latestMoveHandler.current = processWorldPointerMove;
+    function onWorldPointerMove(event: PointerEvent) {
+      if (dragRef.current?.kind !== "element" || !dragRef.current.translation) { processWorldPointerMove(event); return; }
+      pendingPointer.current = event;
+      pointerFrame.current ??= requestAnimationFrame(() => {
+        pointerFrame.current = null;
+        const pending = pendingPointer.current; pendingPointer.current = null;
+        if (pending) latestMoveHandler.current?.(pending);
+      });
+    }
     window.addEventListener("pointermove", onWorldPointerMove);
     window.addEventListener("pointerup", onWorldPointerUp);
     window.addEventListener("pointercancel", onWorldPointerUp);
