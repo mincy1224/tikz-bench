@@ -3,7 +3,9 @@ import { DEFAULT_MACRO_EXPANSION_MAX_DEPTH, expandMacroBindings } from "../../ma
 import { parseOptionListRaw, splitTopLevel } from "../../options/parse.js";
 import type { OptionListAst } from "../../options/types.js";
 import { parseLength } from "../coords/parse-length.js";
-import type { SemanticContext } from "../context.js";
+import { readNamedNodeGeometry, type SemanticContext } from "../context.js";
+import { computePositioningAnchorOffsetsByDirection } from "./positioning-geometry.js";
+import { identityMatrix } from "../transform.js";
 import type { NodePositioningResolution } from "../path/node-positioning.js";
 import type { DiagnosticPushFn, FeatureMarkFn } from "../path/types.js";
 import { normalizeOptionValue, parseStyleValueAsOptionList, readBalancedBlock } from "../style/option-utils.js";
@@ -74,7 +76,10 @@ export type MatrixMode = {
   matrixAnchor?: string;
 };
 
+type MatrixSpacingOption = { span: Span; raw: string };
+
 type MatrixParsedRows = {
+  spacingOptions: MatrixSpacingOption[];
   rows: Array<{
     cells: MatrixParsedCell[];
     columnGapOverrides: number[];
@@ -83,6 +88,7 @@ type MatrixParsedRows = {
 };
 
 export type MatrixParsedRowsForEdit = {
+  spacingOptions: MatrixSpacingOption[];
   rows: Array<{
     cells: Array<{
       raw: string;
@@ -260,9 +266,26 @@ export function evaluateMatrixNodeItem(params: EvaluateMatrixNodeParams): Matrix
     params.effectiveNodeOptions
   );
   const scopedMatrixNames = collectScopedNodeNames(params.forcedName ?? params.item.name, params.item.aliases, params.context);
+  const rp = params.resolvedPositioning.relativePlacement;
+  if (rp) {
+    params.context.editHandles = params.context.editHandles.filter((handle) => handle.sourceRef.sourceId !== params.statement.id || handle.kind !== "node-position");
+    const target = readNamedNodeGeometry(params.context, rp.targetNodeName);
+    params.context.editHandles.push({
+      id: `handle:${params.statement.id}:matrix-positioning`, runtimeId: `handle:${params.statement.id}:matrix-positioning`,
+      sourceRef: { sourceId: params.statement.id, sourceSpan: rp.span, sourceFingerprint: params.context.sourceFingerprint },
+      kind: "node-position", handleType: "node-positioning", coordinateForm: "cartesian", rewriteMode: "positioning", world: matrixCenter,
+      transform: params.context.stack[params.context.stack.length - 1].transform,
+      sourceText: params.context.source.slice(rp.span.from, rp.span.to),
+      positioningContext: { direction: rp.direction, targetNodeName: rp.targetNodeName, targetCenter: rp.targetCenter, currentCenter: matrixCenter, legacyOf: rp.legacyOf,
+        targetAnchorHW: target?.anchorHalfWidth ?? 0, targetAnchorHH: target?.anchorHalfHeight ?? 0,
+        currentAnchorHW: matrixLayout.anchorHalfWidth, currentAnchorHH: matrixLayout.anchorHalfHeight,
+        anchorOffsetsByDirection: computePositioningAnchorOffsetsByDirection({ targetNodeName: rp.targetNodeName, targetCenter: rp.targetCenter, currentCenter: matrixCenter, context: params.context, legacyOf: rp.legacyOf, nodeShape: params.nodeShape, nodeLayout: matrixLayout, nodeOptions: params.effectiveNodeOptions, nodeTransform: identityMatrix() })
+      }
+    });
+  }
 
   for (const name of scopedMatrixNames) {
-    registerNamedNodeAnchors(params.context, name, matrixCenter, params.nodeShape, matrixLayout, params.effectiveNodeOptions);
+    registerNamedNodeAnchors(params.context, name, matrixCenter, params.nodeShape, matrixLayout, params.effectiveNodeOptions, identityMatrix(), params.statement.id);
   }
 
   const matrixNodeElements: SceneElement[] = [];
@@ -1164,6 +1187,7 @@ export function resolveMatrixMode(options: OptionListAst | undefined): MatrixMod
 function parseMatrixRows(input: string, cellSeparator: string, baseOffset: number): MatrixParsedRows {
   const rows: Array<{ cells: MatrixParsedCell[]; columnGapOverrides: number[] }> = [];
   const rowGapOverrides: number[] = [];
+  const spacingOptions: MatrixSpacingOption[] = [];
   let start = 0;
   let cursor = 0;
   let braceDepth = 0;
@@ -1177,6 +1201,7 @@ function parseMatrixRows(input: string, cellSeparator: string, baseOffset: numbe
         const rowRaw = input.slice(start, cursor);
         const split = splitMatrixRowCells(rowRaw, cellSeparator, baseOffset + start);
         rows.push(split);
+        spacingOptions.push(...split.spacingOptions);
 
         cursor += 2;
         while (cursor < input.length && /\s/u.test(input[cursor] ?? "")) {
@@ -1186,6 +1211,7 @@ function parseMatrixRows(input: string, cellSeparator: string, baseOffset: numbe
         if (input[cursor] === "[") {
           const block = readBalancedBlock(input, cursor, "[", "]");
           if (block) {
+            spacingOptions.push({ span: { from: baseOffset + cursor + 1, to: baseOffset + block.nextIndex - 1 }, raw: block.content });
             rowGap = parseMatrixSpacing(block.content).gap;
             cursor = block.nextIndex;
           }
@@ -1216,18 +1242,20 @@ function parseMatrixRows(input: string, cellSeparator: string, baseOffset: numbe
     cursor += 1;
   }
 
-  rows.push(splitMatrixRowCells(input.slice(start), cellSeparator, baseOffset + start));
+  const lastRow = splitMatrixRowCells(input.slice(start), cellSeparator, baseOffset + start);
+  rows.push(lastRow); spacingOptions.push(...lastRow.spacingOptions);
   while (rows.length > 1 && rows[rows.length - 1]?.cells.every((cell) => cell.raw.trim().length === 0)) {
     rows.pop();
     rowGapOverrides.pop();
   }
 
-  return { rows, rowGapOverrides };
+  return { rows, rowGapOverrides, spacingOptions };
 }
 
 export function parseMatrixRowsForEdit(input: string, cellSeparator: string, baseOffset: number): MatrixParsedRowsForEdit {
   const parsed = parseMatrixRows(input, cellSeparator, baseOffset);
   return {
+    spacingOptions: parsed.spacingOptions,
     rows: parsed.rows.map((row) => ({
       cells: row.cells.map((cell) => ({
         raw: cell.raw,
@@ -1241,9 +1269,10 @@ function splitMatrixRowCells(
   rowRaw: string,
   cellSeparator: string,
   rowOffset: number
-): { cells: MatrixParsedCell[]; columnGapOverrides: number[] } {
+): { cells: MatrixParsedCell[]; columnGapOverrides: number[]; spacingOptions: MatrixSpacingOption[] } {
   const cells: MatrixParsedCell[] = [];
   const columnGapOverrides: number[] = [];
+  const spacingOptions: MatrixSpacingOption[] = [];
   let start = 0;
   let cursor = 0;
   let braceDepth = 0;
@@ -1269,6 +1298,7 @@ function splitMatrixRowCells(
       if (rowRaw[cursor] === "[") {
         const block = readBalancedBlock(rowRaw, cursor, "[", "]");
         if (block) {
+          spacingOptions.push({ span: { from: rowOffset + cursor + 1, to: rowOffset + block.nextIndex - 1 }, raw: block.content });
           columnGap = parseMatrixSpacing(block.content).gap;
           cursor = block.nextIndex;
         }
@@ -1307,7 +1337,7 @@ function splitMatrixRowCells(
       to: rowOffset + rowRaw.length
     }
   });
-  return { cells, columnGapOverrides };
+  return { cells, columnGapOverrides, spacingOptions };
 }
 
 function parseMatrixCell(rawCell: MatrixParsedCell, mode: MatrixMode): MatrixCell | null {

@@ -5,6 +5,22 @@ import type { SourcePatch } from "../packages/core/src/edit/types.js";
 import { createIncrementalParseSession, parseTikz } from "../packages/core/src/parser/index.js";
 
 describe("incremental parser session", () => {
+  it("maps a prefix insertion and a whole nested statement replacement from one baseline", () => {
+    const source = String.raw`\begin{tikzpicture}\begin{scope}\draw (0,0)--(1,1);\node at (2,0) {A};\end{scope}\draw (3,0)--(4,0);\end{tikzpicture}`;
+    const seeded = parseWithContext(source);
+    const scope = seeded.figure.body[0]; if (scope.kind !== "Scope") throw new Error("scope");
+    const node = scope.body[1];
+    const offset = source.indexOf("\\begin{scope}") + "\\begin{scope}".length;
+    const applied = applyReplacements(source, [
+      { span: { from: offset, to: offset }, replacement: "[xscale=1.25,yshift=-2pt]" },
+      { span: node.span, replacement: String.raw`\node[minimum width=35pt] at (2.333,0) {A};` }
+    ]);
+    const session = createIncrementalParseSession(); session.prime(seeded, { includeContextDefinitions: true });
+    const incremental = session.evaluate({ source: applied.source, activeFigureId: seeded.activeFigureId, includeContextDefinitions: true, patches: applied.patches, changedSourceIds: [scope.id, ...scope.body.map((item) => item.id)], trigger: "drag-element" });
+    expect(incremental.stats.strategy).toBe("incremental");
+    expect(normalizeFigureForComparison(incremental.parse.figure)).toEqual(normalizeFigureForComparison(parseWithContext(applied.source).figure));
+    expect(incremental.parse.figures).toEqual(parseWithContext(applied.source).figures);
+  });
   it("reuses a primed parse when callers rely on default options", () => {
     const source = String.raw`\begin{tikzpicture}
   \draw (0,0) -- (1,0);

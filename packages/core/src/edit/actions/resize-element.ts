@@ -1,5 +1,7 @@
 import { collectArrangeWorldBounds } from "../scope-bounds.js";
 import { scaleObjectStyle } from "../scale-object-style.js";
+import { resizeMatrix } from "./resize-matrix.js";
+import { resizeGroupLayout } from "./resize-group-layout.js";
 import type { EditActionResultLike } from "../result-types.js";
 import type {
   EditHandle,
@@ -18,7 +20,7 @@ import { pt } from "../../coords/scalars.js";
 import { applyFrameTransform } from "../../coords/frame.js";
 import { frameLocalPoint, worldPoint } from "../../coords/points.js";
 import type { FrameLocalPoint, WorldPoint } from "../../coords/points.js";
-import type { FrameTransform } from "../../coords/transforms.js";
+import type { FrameTransform, WorldTransform } from "../../coords/transforms.js";
 import { frameTransform, worldTransform } from "../../coords/transforms.js";
 import type { CoordinateItem, NodeItem, PathItem, PathOptionItem, Statement, Span } from "../../ast/types.js";
 import type { PropertyTarget } from "../property-target.js";
@@ -111,6 +113,19 @@ export function applyResizeElementAction(
   evaluateOptions: EvaluateOptions | undefined,
   parseOptions: EditParseOptions = {}
 ): EditActionResultLike {
+  const matrixTarget = resolvePropertyTarget(source, action.elementId, parseOptions);
+  if (matrixTarget.kind === "found" && matrixTarget.target.kind === "matrix-statement") {
+    const parsed = parseTikzForEdit(source, parseOptions);
+    return resizeMatrix(source, action, matrixTarget.target, evaluateTikzFigure(parsed.figure, source, evaluateOptions), parseOptions);
+  }
+  const parsedScope = parseTikzForEdit(source, parseOptions);
+  if (matrixTarget.kind === "found" && findScopeStatementById(parsedScope.figure.body, action.elementId)) {
+    const parsed = parsedScope, semantic = evaluateTikzFigure(parsed.figure, source, evaluateOptions);
+    const geometricAction = { ...action, preserveAspect: Boolean(action.preserveAspect) || Boolean(action.scaleContents) };
+    const geometric = applyResizeScope(source, geometricAction, matrixTarget.target, collectArrangeWorldBounds(semantic.scene.elements, parsed.figure.body), parsed.figure.body, semantic.placements.get(action.elementId)?.parentFrame);
+    if (geometric.kind !== "success") return geometric;
+    return resizeGroupLayout(source, geometric, geometricAction, parsed, semantic, parseOptions);
+  }
   if (action.scaleContents) {
     const geometry = applyResizeElementAction(source, { ...action, scaleContents: false, preserveAspect: true }, evaluateOptions, parseOptions);
     if (geometry.kind !== "success") return geometry;
@@ -123,7 +138,7 @@ export function applyResizeElementAction(
     const ids: string[] = [];
     const visit = (body: Statement[], inside = false): void => { for (const statement of body) { const selected = inside || statement.id === action.elementId; if (statement.kind === "Scope") visit(statement.body, selected); else if (selected) ids.push(statement.id); } };
     visit(parseTikzForEdit(source, parseOptions).figure.body);
-    const next = (ids.length ? ids : [action.elementId]).reduce((current, id) => scaleObjectStyle(current, id, factor, source, before.scene.elements), geometry.newSource);
+    const next = (ids.length ? ids : [action.elementId]).reduce((current, id) => scaleObjectStyle(current, id, factor, source, before.scene.elements, parseOptions), geometry.newSource);
     const applied = applyTextReplacements(source, [{ span: { from: 0, to: source.length }, text: next }]);
     return { kind: "success", newSource: next, patches: applied.patches, changedSourceIds: [action.elementId] };
   }
@@ -140,18 +155,11 @@ export function applyResizeElementAction(
     return { kind: "unsupported", reason: FIT_DIRECT_MANIPULATION_BLOCK_REASON };
   }
 
-  const parsed = parseTikzForEdit(source, {
-    ...parseOptions,
-  });
+  const parsed = parsedScope;
   if (sourceUsesFitNodeFromParseResult(source, parsed, elementId)) {
     return { kind: "unsupported", reason: FIT_DIRECT_MANIPULATION_BLOCK_REASON };
   }
   const semantic = evaluateTikzFigure(parsed.figure, source, evaluateOptions);
-  const boundsBySource = collectSourceWorldBounds(semantic.scene.elements);
-  const scopeBoundsById = buildScopeBoundsById(parsed.figure.body, boundsBySource);
-  if (findScopeStatementById(parsed.figure.body, elementId)) {
-    return applyResizeScope(source, action, resolved.target, scopeBoundsById, parsed.figure.body, parseOptions);
-  }
   const hasNodePositionHandle = semantic.editHandles.some(
     (handle) => handle.sourceRef.sourceId === elementId && handle.kind === "node-position"
   );
@@ -526,7 +534,7 @@ function applyResizeScope(
   target: PropertyTarget,
   scopeBoundsById: ReadonlyMap<string, { minX: number; minY: number; maxX: number; maxY: number }>,
   statements: readonly Statement[],
-  parseOptions: EditParseOptions
+  parent: WorldTransform | undefined
 ): EditActionResultLike {
   const bounds = action.referenceBounds ?? scopeBoundsById.get(action.elementId);
   if (!bounds) {
@@ -569,12 +577,7 @@ function applyResizeScope(
   }
   if (![scaleRatioX, scaleRatioY].every(Number.isFinite)) return { kind: "unsupported", reason: "Scope resize produced a non-finite transform." };
   if (Math.abs(scaleRatioX - 1) + Math.abs(scaleRatioY - 1) < RESIZE_EPSILON) return { kind: "unsupported", reason: "Resize would not change node constraints." };
-  // Probe the enclosing frame without persisting any synthetic statement.
-  const probe = "\\path (0pt,0pt);";
-  const probeSource = source.slice(0, target.span.from) + probe + source.slice(target.span.from);
-  const probeSemantic = evaluateTikzFigure(parseTikzForEdit(probeSource, parseOptions).figure, probeSource);
-  const probeHandle = probeSemantic.editHandles.find((handle) => handle.sourceRef.sourceSpan.from >= target.span.from && handle.sourceRef.sourceSpan.to <= target.span.from + probe.length && isFrameLocalCoordinateEditHandle(handle));
-  const parent = probeHandle && isFrameLocalCoordinateEditHandle(probeHandle) ? worldTransform(probeHandle.frame.a, probeHandle.frame.b, probeHandle.frame.c, probeHandle.frame.d, probeHandle.frame.e, probeHandle.frame.f) : worldTransform(1, 0, 0, 1, 0, 0);
+  if (!parent) return { kind: "unsupported", reason: "无法确定组合的父级变换，未修改对象。" };
   const transformedParent = Math.abs(parent.a - 1) + Math.abs(parent.b) + Math.abs(parent.c) + Math.abs(parent.d - 1) + Math.abs(parent.e) + Math.abs(parent.f) > RESIZE_EPSILON;
   if (transformedParent || action.preserveAspect || Math.abs(currentContext.values.rotate) > 1e-6 || target.options?.entries.some((entry) => entry.kind === "kv" && normalizeOptionKey(entry.key) === "cm")) {
     const inverse = inverseMatrix(parent); if (!inverse) return { kind: "unsupported", reason: "The enclosing frame is singular." };
@@ -607,7 +610,7 @@ function applyResizeScope(
     return { kind: "unsupported", reason: "Scope resize produced a non-finite transform." };
   }
 
-  const rewritten = applyScopeTransformRewrite(source, target, nextValues, action.formatPrecision);
+  const rewritten = applyScopeTransformRewrite(source, target, nextValues, "fine");
   if (!rewritten) {
     return { kind: "unsupported", reason: "Resize would not change node constraints." };
   }
@@ -640,10 +643,10 @@ function applyScopeTransformRewrite(
     });
   }
   if (Math.abs(values.xscale - 1) > RESIZE_EPSILON) {
-    orderedSetMutations.set("xscale", { kind: "set", value: formatNumber(values.xscale) });
+    orderedSetMutations.set("xscale", { kind: "set", value: formatNumber(values.xscale, { fractionDigits: 6 }) });
   }
   if (Math.abs(values.yscale - 1) > RESIZE_EPSILON) {
-    orderedSetMutations.set("yscale", { kind: "set", value: formatNumber(values.yscale) });
+    orderedSetMutations.set("yscale", { kind: "set", value: formatNumber(values.yscale, { fractionDigits: 6 }) });
   }
 
   if (target.options && target.optionsSpan) {
@@ -719,47 +722,6 @@ function resolveFixedScopePoint(
     case "bottom":
       return wp((bounds.minX + bounds.maxX) / 2, bounds.maxY);
   }
-}
-
-function buildScopeBoundsById(
-  statements: readonly Statement[],
-  boundsBySource: ReadonlyMap<string, { minX: number; minY: number; maxX: number; maxY: number }>
-): Map<string, { minX: number; minY: number; maxX: number; maxY: number }> {
-  const boundsByScopeId = new Map<string, { minX: number; minY: number; maxX: number; maxY: number }>();
-
-  const visit = (items: readonly Statement[]): { minX: number; minY: number; maxX: number; maxY: number } | null => {
-    let merged: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
-    for (const statement of items) {
-      if (statement.kind === "Scope") {
-        const childBounds = visit(statement.body);
-        if (childBounds) {
-          boundsByScopeId.set(statement.id, childBounds);
-          merged = merged ? mergeBounds(merged, childBounds) : childBounds;
-        }
-        continue;
-      }
-      const ownBounds = boundsBySource.get(statement.id);
-      if (ownBounds) {
-        merged = merged ? mergeBounds(merged, ownBounds) : ownBounds;
-      }
-    }
-    return merged;
-  };
-
-  visit(statements);
-  return boundsByScopeId;
-}
-
-function mergeBounds(
-  left: { minX: number; minY: number; maxX: number; maxY: number },
-  right: { minX: number; minY: number; maxX: number; maxY: number }
-): { minX: number; minY: number; maxX: number; maxY: number } {
-  return {
-    minX: Math.min(left.minX, right.minX),
-    minY: Math.min(left.minY, right.minY),
-    maxX: Math.max(left.maxX, right.maxX),
-    maxY: Math.max(left.maxY, right.maxY)
-  };
 }
 
 function findScopeStatementById(

@@ -6,9 +6,13 @@ export type DragCapability = {
 };
 
 export function computeDragCapability(editHandles: readonly EditHandle[]): DragCapability {
+  const byId = new Map(editHandles.map((handle) => [handle.id, handle]));
+  const ownersBySpan = new Map<string, Set<string>>();
   const rewriteTargetsByHandleId = new Map<string, EditHandle | null>();
   for (const handle of editHandles) {
-    rewriteTargetsByHandleId.set(handle.id, resolveRewriteTarget(handle, editHandles));
+    const target = handle.rewriteTargetHandleId ? byId.get(handle.rewriteTargetHandleId) ?? null : handle;
+    rewriteTargetsByHandleId.set(handle.id, target);
+    if (target) { const span = target.sourceRef.sourceSpan, key = `${span.from}:${span.to}`; const owners = ownersBySpan.get(key) ?? new Set<string>(); owners.add(target.id); ownersBySpan.set(key, owners); }
   }
 
   const draggableHandleIds = new Set<string>();
@@ -21,13 +25,13 @@ export function computeDragCapability(editHandles: readonly EditHandle[]): DragC
       if (!isNamedEndpointDetachHandle(handle)) {
         continue;
       }
-      if (hasConflictingRewriteTarget(handle, editHandles, rewriteTarget, rewriteTargetsByHandleId)) {
+      if (hasConflictingRewriteTarget(rewriteTarget, ownersBySpan)) {
         continue;
       }
       draggableHandleIds.add(handle.id);
       continue;
     }
-    if (hasConflictingRewriteTarget(handle, editHandles, rewriteTarget, rewriteTargetsByHandleId)) {
+    if (hasConflictingRewriteTarget(rewriteTarget, ownersBySpan)) {
       continue;
     }
     draggableHandleIds.add(handle.id);
@@ -54,7 +58,7 @@ export function computeDragCapability(editHandles: readonly EditHandle[]): DragC
       if (!rewriteTarget || rewriteTarget.rewriteMode === "unsupported") {
         return false;
       }
-      return !hasConflictingRewriteTarget(handle, editHandles, rewriteTarget, rewriteTargetsByHandleId);
+      return !hasConflictingRewriteTarget(rewriteTarget, ownersBySpan);
     });
     if (sourceFullyRewritable) {
       draggableSourceIds.add(sourceId);
@@ -68,38 +72,7 @@ function isNamedEndpointDetachHandle(handle: EditHandle): boolean {
   return handle.kind === "path-point" && handle.coordinateForm === "named";
 }
 
-function resolveRewriteTarget(handle: EditHandle, editHandles: readonly EditHandle[]): EditHandle | null {
-  if (!handle.rewriteTargetHandleId) {
-    return handle;
-  }
-  return editHandles.find((candidate) => candidate.id === handle.rewriteTargetHandleId) ?? null;
-}
-
-function hasConflictingRewriteTarget(
-  handle: EditHandle,
-  allHandles: readonly EditHandle[],
-  rewriteTarget: EditHandle,
-  rewriteTargetsByHandleId: ReadonlyMap<string, EditHandle | null>
-): boolean {
-  const rewriteTargetSpan = rewriteTarget.sourceRef.sourceSpan;
-  for (const candidate of allHandles) {
-    if (candidate.id === handle.id) {
-      continue;
-    }
-    const candidateRewriteTarget = rewriteTargetsByHandleId.get(candidate.id) ?? null;
-    if (!candidateRewriteTarget) {
-      continue;
-    }
-    if (candidateRewriteTarget.id === rewriteTarget.id) {
-      continue;
-    }
-    const candidateSpan = candidateRewriteTarget.sourceRef.sourceSpan;
-    if (
-      candidateSpan.from === rewriteTargetSpan.from &&
-      candidateSpan.to === rewriteTargetSpan.to
-    ) {
-      return true;
-    }
-  }
-  return false;
+function hasConflictingRewriteTarget(target: EditHandle, owners: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+  const span = target.sourceRef.sourceSpan;
+  return (owners.get(`${span.from}:${span.to}`)?.size ?? 0) > 1;
 }

@@ -3,10 +3,12 @@ import { evaluateTikzFigure } from "tikz-editor/semantic/evaluate";
 import { prepareTranslation } from "tikz-editor/edit/prepared-translation";
 import { createElementTranslationPreview } from "./element-translation-preview";
 import { useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { clientPoint, px, pt, worldBounds, worldVector } from "tikz-editor/coords/index";
-import { buildSnapContext, collectSelectionGeometryFromBounds, collectSourceWorldBounds, type SnapBounds, type SnapGuideInput, type SnapLine, type SnapSettingsPatch } from "tikz-editor/edit/snapping";
+import { clientPoint, px, pt, worldVector } from "tikz-editor/coords/index";
+import { buildSnapContext, collectSelectionGeometryFromBounds, type SnapBounds, type SnapGuideInput, type SnapLine, type SnapSettingsPatch } from "tikz-editor/edit/snapping";
 import { collectArrangeWorldBounds } from "tikz-editor/edit/scope-bounds";
 import { SourceEditTransaction } from "../../store/source-edit-transaction";
+import { useEditorStore } from "../../store/store";
+import { useMatrixEditing } from "./matrix-editing";
 import { paintObject } from "../format-painter";
 import type { EditHandle, SceneElement } from "tikz-editor/semantic/types";
 import type { ClientPoint, WorldBounds, WorldPoint } from "../coords/types";
@@ -75,6 +77,9 @@ function clientPointFromEvent(event: Pick<PointerEvent | ReactPointerEvent<SVGEl
 }
 
 export function useCanvasElementInteractions(args: UseCanvasElementInteractionsArgs) {
+  const documentId = useEditorStore((state) => state.activeDocumentId);
+  const matrixEditing = useMatrixEditing();
+  useEffect(() => { useMatrixEditing.getState().leave(); }, [documentId]);
   const {
     svgResult,
     toolMode,
@@ -109,6 +114,13 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
     parseOptions,
     onNodePositionTargetPick
   } = args;
+
+  useEffect(() => {
+    const active = useMatrixEditing.getState();
+    if (!active.matrixId || active.documentId !== documentId) return;
+    const cells = new Set(snapshot.scene?.elements.flatMap((element) => element.matrixCell?.matrixSourceId === active.matrixId ? [element.matrixCell.cellSourceId] : []) ?? []);
+    if (![...selectedElementIds].some((id) => cells.has(id))) active.leave();
+  }, [documentId, selectedElementIds, snapshot.scene]);
 
   const pendingScopeDrillRef = useRef<{
     pointerId: number;
@@ -178,36 +190,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
             viewportWorld: viewportWorldBounds
           })
         : null;
-      const worldBoundsBySource = snapshot.scene
-        ? collectSourceWorldBounds(snapshot.scene.elements)
-        : new Map<string, SnapBounds>();
-      const worldInteractionBoundsBySource = new Map<string, SnapBounds>(worldBoundsBySource);
-      for (const scopeId of scopeOverlay.scopesById.keys()) {
-        let mergedBounds: WorldBounds | null = null;
-        for (const [sourceId, sourceBounds] of worldBoundsBySource.entries()) {
-          const ancestors = scopeOverlay.ancestorScopeIdsBySourceId.get(sourceId) ?? [];
-          if (!ancestors.includes(scopeId)) {
-            continue;
-          }
-          mergedBounds = mergedBounds
-            ? worldBounds(
-                pt(Math.min(mergedBounds.minX, sourceBounds.minX)),
-                pt(Math.min(mergedBounds.minY, sourceBounds.minY)),
-                pt(Math.max(mergedBounds.maxX, sourceBounds.maxX)),
-                pt(Math.max(mergedBounds.maxY, sourceBounds.maxY))
-              )
-            : worldBounds(sourceBounds.minX, sourceBounds.minY, sourceBounds.maxX, sourceBounds.maxY);
-        }
-        if (!mergedBounds) {
-          continue;
-        }
-        worldInteractionBoundsBySource.set(scopeId, Object.assign(worldBounds(
-          mergedBounds.minX,
-          mergedBounds.minY,
-          mergedBounds.maxX,
-          mergedBounds.maxY
-        ), { sourceId: scopeId }));
-      }
+      const worldInteractionBoundsBySource = new Map<string, SnapBounds>([...collectArrangeWorldBounds(snapshot.scene?.elements ?? [], snapshot.parseResult?.figure.body ?? [])].map(([sourceId, bounds]) => [sourceId, { ...bounds, sourceId }]));
 
       const initialSelection = collectSelectionGeometryFromBounds(worldInteractionBoundsBySource, draggedIds);
       const selectionAnchorRatio = initialSelection
@@ -215,11 +198,13 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         : null;
       setSnapLines([]);
 
+      dispatch({ type: "SET_FIT_TO_CONTENT_MODE", active: false });
       const transaction = new SourceEditTransaction("移动");
-      const baseline = parseTikzForEdit(transaction.base, { activeFigureId });
-      const baselineSemantic = evaluateTikzFigure(baseline.figure, transaction.base);
+      const baseline = snapshot.parseResult ?? parseTikzForEdit(transaction.base, { activeFigureId });
+      const baselineSemantic = snapshot.semanticResult ?? evaluateTikzFigure(baseline.figure, transaction.base);
       const baselineHandles = baselineSemantic.editHandles;
-      const translation = prepareTranslation(transaction.base, baselineHandles, draggedIds, { activeFigureId });
+      const translation = prepareTranslation(transaction.base, baselineHandles, draggedIds, { activeFigureId }, baselineSemantic, baseline);
+      if (!translation) { transaction.finish(true); setWarning("选区无法安全移动，未修改任何对象。"); return; }
       setDragState({
         kind: "element",
         transaction,
@@ -254,6 +239,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
     },
     [
       activeFigureId,
+      dispatch,
       canvasTransform.scale,
       directManipulationDisabledReasonBySourceId,
       draggableSourceIds,
@@ -265,7 +251,8 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       snapGuideInput,
       snapSettingsPatch,
       snapshot.scene,
-      snapshot.parseResult?.figure.body,
+      snapshot.parseResult,
+      snapshot.semanticResult,
       snapshot.source,
       source,
       viewportWorldBounds,
@@ -433,9 +420,12 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         region?.shape === "rect" && region.matrixEdgeSelection
           ? region.matrixEdgeSelection
           : null;
+      const matrixCell = snapshot.scene?.elements.find((element) => element.sourceRef.sourceId === hitSourceId && element.matrixCell)?.matrixCell;
+      const insideMatrix = matrixCell && matrixEditing.documentId === documentId && matrixEditing.matrixId === matrixCell.matrixSourceId;
+      if (matrixEditing.matrixId && !insideMatrix && matrixEdgeSelection?.matrixSourceId !== matrixEditing.matrixId) matrixEditing.leave();
       const resolvedTargetId = resolveScopeAwarePointerDownTarget({
-        hitTargetId: targetId,
-        hitSourceId,
+        hitTargetId: matrixCell && !insideMatrix ? matrixCell.matrixSourceId : targetId,
+        hitSourceId: matrixCell && !insideMatrix ? matrixCell.matrixSourceId : hitSourceId,
         scopeOverlay,
         focusedScopeId
       });
@@ -458,7 +448,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       event.stopPropagation();
       suppressNextBackgroundClickRef.current = true;
 
-      if (!additiveSelection && matrixEdgeSelection && event.button === 0) {
+      if (!additiveSelection && matrixEdgeSelection && matrixEditing.matrixId === matrixEdgeSelection?.matrixSourceId && event.button === 0) {
         closeTextEditingSession();
         setExpandedDensePathSourceId(null);
         dispatch({ type: "SELECT_RANGE", ids: matrixEdgeSelection.selectionIds });
@@ -470,7 +460,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
         return;
       }
 
-      const textTarget = resolvedTargetId === targetId ? resolveEditableTextTarget(targetId, region) : null;
+      const textTarget = (!matrixCell || insideMatrix) && resolvedTargetId === targetId ? resolveEditableTextTarget(targetId, region) : null;
       if (!additiveSelection && textTarget) {
         const draggedIds = alreadySelected && selectedElementIds.size > 0 ? [...selectedElementIds] : [resolvedTargetId];
         const supportsDeferredTextDrag = snapshot.editHandles.some(
@@ -591,6 +581,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
     },
     [
       beginCanvasTextInteraction,
+      matrixEditing, documentId, snapshot.scene,
       dispatch,
       draggableSourceIds,
       focusedScopeId,
@@ -653,6 +644,16 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       if (toolMode !== "select") return;
 
       const sourceId = typeof region?.sourceId === "string" ? region.sourceId : targetId;
+      const cell = snapshot.scene?.elements.find((element) => element.sourceRef.sourceId === sourceId && element.matrixCell)?.matrixCell;
+      if (cell) {
+        event.preventDefault(); event.stopPropagation();
+        matrixEditing.enter(documentId, cell.matrixSourceId);
+        dispatch({ type: "SELECT", id: cell.cellSourceId, additive: false });
+        const textTarget = resolveEditableTextTarget(targetId, region);
+        if (textTarget) beginCanvasTextInteraction({ ...event, detail: 2, button: 0, pointerId: 0, currentTarget: event.currentTarget } as unknown as ReactPointerEvent<SVGElement>, textTarget);
+        else { closeTextEditingSession(); viewportRef.current?.focus({ preventScroll: true }); }
+        return;
+      }
       const textTarget = resolveEditableTextTarget(targetId, region);
 
       event.preventDefault();
@@ -687,6 +688,7 @@ export function useCanvasElementInteractions(args: UseCanvasElementInteractionsA
       }
     },
     [
+      snapshot.scene, matrixEditing, documentId, beginCanvasTextInteraction,
       dispatch,
       densePathSourceIds,
       scopeOverlay,

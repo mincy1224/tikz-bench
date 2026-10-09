@@ -160,7 +160,7 @@ export type DragState =
     }
   | {
       kind: "resize";
-      transaction?: SourceEditTransaction;
+      transaction: SourceEditTransaction;
       pointerId: number;
       elementId: string;
       role: ResizeRole;
@@ -181,6 +181,7 @@ export type DragState =
     }
   | {
       kind: "rotate";
+      transaction: SourceEditTransaction;
       pointerId: number;
       elementId: string;
       sourceId: string;
@@ -195,8 +196,6 @@ export type DragState =
       activeRotateMode: "property" | "origin" | "center-pivot";
       lastPointerClient: ClientPoint;
       lastPointerWorld: WorldPoint;
-      preEditBaselineSource: string;
-      latestSource: string;
       historyMergeKey: string;
     }
   | {

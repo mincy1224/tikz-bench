@@ -76,6 +76,7 @@ import {
   makeEveryOnBackgroundLayerOptionLayer
 } from "./backgrounds.js";
 import type { SemanticDependencyGraph } from "./dependencies.js";
+import { buildPlacementGeometry, type PlacementGeometry } from "./placement-geometry.js";
 import { evaluateRawCoordinate } from "./coords/evaluate.js";
 import { parseLength } from "./coords/parse-length.js";
 import { evaluatePathStatement } from "./path/evaluate.js";
@@ -122,6 +123,8 @@ import { BACKGROUND_SCENE_LAYER, MAIN_SCENE_LAYER } from "./types.js";
 import type { SemanticSymbolDependencyEdge, SemanticUnresolvedSymbol } from "./symbol-resolver.js";
 
 export type EvaluateTikzResult = {
+  placements: ReadonlyMap<string, PlacementGeometry>;
+  statementParentFrames: ReadonlyMap<string, WorldTransform>;
   scene: SceneFigure;
   diagnostics: Diagnostic[];
   featureUsage: FeatureUsage;
@@ -512,6 +515,8 @@ export function finalizeSemanticEvaluationRun(
     diagnostics: run.diagnostics,
     featureUsage: run.featureUsage,
     editHandles: run.context.editHandles,
+    statementParentFrames: new Map(run.context.statementParentFrames),
+    placements: buildPlacementGeometry(run.figure.body, run.context.statementParentFrames, run.context.editHandles, orderedElements),
     nodeAnchorTargets: collectNodeAnchorTargets(run.context),
     dependencies: run.context.dependencyBuilder.build(),
     sourceStatementFirstIndexBySourceId: buildSourceStatementFirstIndexBySourceId(run),
@@ -878,6 +883,8 @@ function evaluateStatement(
   featureUsage: FeatureUsage,
   statementMacroAttribution: WeakMap<Statement, MacroOriginFrame[]>
 ): SceneElement[] {
+  context.statementParentFrames.set(statement.id, { ...currentFrame(context).transform });
+  context.statementEffectTracker?.placementFrames.set(statement.id, { ...currentFrame(context).transform });
   if (statement.kind === "Path") {
     markFeature(featureUsage, "path_statement", "supported");
     const parent = currentFrame(context);

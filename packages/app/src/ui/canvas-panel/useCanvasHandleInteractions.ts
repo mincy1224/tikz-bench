@@ -1,5 +1,6 @@
 import { SourceEditTransaction } from "../../store/source-edit-transaction";
-import { useCallback, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useMemo, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createOperationCapabilities } from "tikz-editor/edit/operation-capabilities";
 import { clientPoint as makeClientPoint, px } from "tikz-editor/coords/index";
 import {
   resolveTransformInspectorMutationContext,
@@ -126,6 +127,7 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
     interactionSvgRef,
     parseOptions
   } = args;
+  const capabilities = useMemo(() => snapshot.semanticResult ? createOperationCapabilities(snapshot.parseResult?.figure.body ?? [], snapshot.semanticResult) : null, [snapshot.semanticResult, snapshot.parseResult]);
 
   const onHandlePointerDown = useCallback(
     (event: ReactPointerEvent<SVGElement>, handle: EditHandle) => {
@@ -249,15 +251,8 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
         return;
       }
       const propertyTarget = resolvePropertyTarget(source, sourceId, parseOptions);
-      if (
-        sourceId.includes(":tree-child:")
-        || sourceId.includes(":matrix-cell:")
-        || (propertyTarget.kind !== "not-found" && propertyTarget.target.kind === "matrix-statement")
-      ) {
-        // Tree descendants, matrix cells, and matrix statements intentionally show corner handles for visual consistency,
-        // but resize drag is not enabled yet.
-        return;
-      }
+      const capability = capabilities?.resize(sourceId);
+      if (capability?.available === false || sourceId.includes(":tree-child:")) { setWarning(capability?.reason ?? "树节点尺寸由布局控制。"); return; }
       const additiveSelection = isResizeHandleAdditiveSelectionModifier(event);
 
       viewportRef.current?.focus({ preventScroll: true });
@@ -319,10 +314,11 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
       const normalizedRole = normalizeResizeRoleForNodeShapeFrame(
         role,
         initialFrame,
-        pathElement != null && pathShapeHint == null
+        pathElement != null && pathShapeHint == null && !(propertyTarget.kind === "found" && propertyTarget.target.kind === "matrix-statement")
       );
       const frameAspectRatio = aspectRatioForResizeFrame(initialFrame);
 
+      dispatch({ type: "SET_FIT_TO_CONTENT_MODE", active: false });
       setSnapLines([]);
       setDragState({
         kind: "resize",
@@ -349,6 +345,7 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
       });
     },
     [
+      capabilities,
       dispatch,
       interactionSvgRef,
       logSnapDebug,
@@ -469,9 +466,11 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
       const startPointerAngleDeg = angleDeg(centerWorld, world);
       const startCenterPivotPointerAngleDeg = angleDeg(centerPivotWorld, world);
 
+      dispatch({ type: "SET_FIT_TO_CONTENT_MODE", active: false });
       setSnapLines([]);
       setDragState({
         kind: "rotate",
+        transaction: new SourceEditTransaction("旋转"),
         pointerId: event.pointerId,
         elementId: rotateTargetId,
         sourceId,
@@ -486,8 +485,6 @@ export function useCanvasHandleInteractions(args: UseCanvasHandleInteractionsArg
         activeRotateMode: "property",
         lastPointerClient: makeClientPoint(px(event.clientX), px(event.clientY)),
         lastPointerWorld: world,
-        preEditBaselineSource: source,
-        latestSource: source,
         historyMergeKey: makeMergeKey("drag-rotate", sourceId, event.pointerId)
       });
       logSnapDebug({

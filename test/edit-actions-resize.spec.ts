@@ -1023,7 +1023,7 @@ describe("applyEditAction – resizeElement", () => {
 
     expect(result.newSource).toContain("label=right:L");
     expect(result.newSource).toContain("pin=above:P");
-    expect(result.newSource).toContain(" at (0.04,0) ");
+    expect(result.newSource).toContain(" at (0.035146,0) ");
     expect(result.newSource).not.toContain("\\node[draw,(");
   });
 

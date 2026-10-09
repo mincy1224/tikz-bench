@@ -519,73 +519,12 @@ function addTreeChildFallbackWarningIfNeeded(
   };
 }
 
-function applyMatrixCellSetProperty(
-  source: string,
-  target: PropertyTarget,
-  action: SetPropertyAction
-): EditActionResultLike {
-  if (!target.matrixOfNodes) {
-    return { kind: "unsupported", reason: "Cell property editing is only available for matrix node cells." };
-  }
-
+function applyMatrixCellSetProperty(source: string, target: PropertyTarget, action: SetPropertyAction): EditActionResultLike {
+  if (!target.matrixOfNodes) return { kind: "unsupported", reason: "Cell property editing is only available for matrix node cells." };
   const key = normalizeOptionKey(action.key);
-  if (key.length === 0) {
-    return { kind: "error", message: "Cannot set an empty option key" };
-  }
-
-  const mutations = createOptionMutationsFromSetProperty(action, key);
-
-  const cellSpan = target.cellSpan!;
-  const textSpan = target.textSpan!;
-
-  if (target.optionSpan) {
-    const optionSpan = target.optionSpan;
-    const currentOptions = parseOptionListRaw(source.slice(optionSpan.from, optionSpan.to), optionSpan.from);
-    const replacement = rewriteOptionListMutations(currentOptions, mutations, undefined, "bracketed");
-    if (replacement.length > 0) {
-      if (source.slice(optionSpan.from, optionSpan.to) === replacement) {
-        return { kind: "unsupported", reason: "setProperty would not change the source." };
-      }
-      const updated = replaceSpan(source, optionSpan, replacement);
-      return {
-        kind: "success",
-        newSource: updated.source,
-        patches: [{ oldSpan: optionSpan, newSpan: updated.changedSpan, replacement }],
-        changedSourceIds: changedSourceIdsForPropertyTarget(target)
-      };
-    }
-
-    const prefixSpan = resolveMatrixCellOptionPrefixSpan(source, optionSpan, cellSpan, textSpan);
-    const updated = replaceSpan(source, prefixSpan, "");
-    return {
-      kind: "success",
-      newSource: updated.source,
-      patches: [{ oldSpan: prefixSpan, newSpan: updated.changedSpan, replacement: "" }],
-      changedSourceIds: changedSourceIdsForPropertyTarget(target)
-    };
-  }
-
-  const setMutations = new Map<string, OptionMutation>();
-  for (const [mutationKey, mutation] of mutations.entries()) {
-    if (mutation.kind === "set") {
-      setMutations.set(mutationKey, mutation);
-    }
-  }
-  if (setMutations.size === 0) {
-    return { kind: "unsupported", reason: "setProperty would not change the source." };
-  }
-
-  const seedOptions = parseOptionListRaw("[]", textSpan.from);
-  const serializedOptions = rewriteOptionListMutations(seedOptions, setMutations, undefined, "bracketed");
-  const insertion = `|${serializedOptions}| `;
-  const insertionSpan: Span = { from: textSpan.from, to: textSpan.from };
-  const updated = replaceSpan(source, insertionSpan, insertion);
-  return {
-    kind: "success",
-    newSource: updated.source,
-    patches: [{ oldSpan: insertionSpan, newSpan: updated.changedSpan, replacement: insertion }],
-    changedSourceIds: changedSourceIdsForPropertyTarget(target)
-  };
+  if (!key) return { kind: "error", message: "Cannot set an empty option key" };
+  const result = applyOptionMutationsToTarget(source, target, createOptionMutationsFromSetProperty(action, key));
+  return result ? { kind: "success", newSource: result.source, patches: [result.patch], changedSourceIds: changedSourceIdsForPropertyTarget(target) } : { kind: "unsupported", reason: "setProperty would not change the source." };
 }
 
 function withChangedSourceIdsForTarget(
@@ -686,31 +625,5 @@ function applyOptionMutationsAtSite(
     kind: "success",
     newSource: updated.source,
     patches: [{ oldSpan: { from: insertOffset, to: insertOffset }, newSpan: updated.changedSpan, replacement: serializedOptions }]
-  };
-}
-
-function resolveMatrixCellOptionPrefixSpan(
-  source: string,
-  optionSpan: Span,
-  cellSpan: Span,
-  textSpan: Span
-): Span {
-  let leftPipe = optionSpan.from - 1;
-  while (leftPipe >= cellSpan.from && /\s/u.test(source[leftPipe] ?? "")) {
-    leftPipe -= 1;
-  }
-
-  let rightPipe = optionSpan.to;
-  while (rightPipe < cellSpan.to && /\s/u.test(source[rightPipe] ?? "")) {
-    rightPipe += 1;
-  }
-
-  let removalTo = rightPipe + 1;
-  while (removalTo < textSpan.from && /\s/u.test(source[removalTo] ?? "")) {
-    removalTo += 1;
-  }
-  return {
-    from: leftPipe,
-    to: removalTo
   };
 }

@@ -87,6 +87,23 @@ describe("shape anchor promotion and transformed ungroup", () => {
   });
 });
 describe("bounded save queue", () => {
+  it("settles queued callers on failure and permits retry with the latest draft", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const calls: string[] = [];
+    const queue = new CoalescingSaveQueue<{ source: string }, string>(async (patch) => {
+      calls.push(patch.source);
+      if (calls.length === 1) { await gate; throw new Error("offline"); }
+      return patch.source;
+    });
+    const first = queue.enqueue({ source: "first" });
+    const pending = queue.enqueue({ source: "latest" });
+    const settled = Promise.allSettled([first, pending]); release();
+    expect((await settled).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(queue.busy).toBe(false);
+    expect(await queue.enqueue({ source: "latest" })).toBe("latest");
+    expect(calls).toEqual(["first", "latest"]);
+  });
   it("merges all queued updates behind one in-flight request", async () => {
     const calls: { source?: string; name?: string }[] = [];
     let release!: () => void;
@@ -128,6 +145,18 @@ describe("group smart guides and partition formatting", () => {
 });
 
 describe("format painter semantic node types", () => {
+  it("shows heterogeneous group formatting and separates matrix outer colors from cells", () => {
+    const source = String.raw`\begin{tikzpicture}\begin{scope}\node[draw=red,font=\small,text=red] at (0,0) {A};\node[draw=blue,font=\Large,text=blue] at (2,0) {B};\end{scope}\matrix[matrix of nodes,nodes={draw=red,fill=blue}] at (5,0) {C & D \\};\end{tikzpicture}`;
+    const objects = editableObjects(source, evaluateSemantic(source).scene.elements, new Set(["scope:0", "path:3"]));
+    const group = objects.find((object) => object.type === "group")!;
+    expect(group.properties.get("resolved-size")).toBe("__mixed__");
+    expect(group.properties.get("resolved-draw")).toBe("__mixed__");
+    expect(group.properties.get("resolved-text")).toBe("__mixed__");
+    expect(captureFormat(group).properties.has("font-size")).toBe(false);
+    const matrix = objects.find((object) => object.type === "tikz:matrix")!;
+    expect(matrix.properties.get("resolved-fill")).toBe("none");
+    expect(matrix.properties.get("resolved-draw")).toBe("none");
+  });
   it("distinguishes nodes by their local shape and writes inside their own options", () => {
     const source = String.raw`\begin{tikzpicture}\node[draw=red] (A) {A};\node[circle,draw] (B) at (2,0) {B};\end{tikzpicture}`;
     const objects = editableObjects(source, evaluateSemantic(source).scene.elements);

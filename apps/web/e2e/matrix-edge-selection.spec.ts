@@ -31,6 +31,7 @@ test("matrix edge strips expose directional cursors and delete full row/column s
   await page.getByRole("button", { name: "Select" }).click();
   await waitForHitRegions(page, 1);
 
+  await page.getByTestId("canvas-svg-layer").locator("[data-source-id*=matrix-cell]").first().dblclick({ force: true });
   const rowStrip = page.locator('[data-hit-region-matrix-edge-kind="row"]').first();
   await expect(rowStrip).toBeVisible();
   await rowStrip.hover();
@@ -54,6 +55,7 @@ test("matrix edge strips expose directional cursors and delete full row/column s
   await expect.poll(async () => page.locator('[data-hit-region-matrix-edge-kind="row"]').count()).toBeGreaterThanOrEqual(2);
   await expect.poll(async () => page.locator('[data-hit-region-matrix-edge-kind="column"]').count()).toBeGreaterThanOrEqual(2);
 
+  await page.getByTestId("canvas-svg-layer").locator("[data-source-id*=matrix-cell]").first().dblclick({ force: true });
   const columnStrip = page.locator('[data-hit-region-matrix-edge-kind="column"]').first();
   await expect(columnStrip).toBeVisible();
   await columnStrip.hover();

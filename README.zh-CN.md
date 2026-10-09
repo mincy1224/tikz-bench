@@ -10,6 +10,8 @@ TikZ Bench 基于 **Dominik Peters** 的 [TikZ Editor](https://github.com/Domini
 
 - 图形、路径、曲线、文字、组合和锚点连线。
 - 分区矩形：横向／纵向排列、逐区内容与填色。
+- 矩阵：单击选择并移动整体，双击编辑单元格；布局尺寸调整与整体缩放分开。
+- 矩阵锚点及嵌套变换组按世界坐标移动；方向键 1pt、Shift 为 10pt，不受网格影响。
 - 字号、颜色、线宽、双端箭头独立尺寸；实时预览、撤销／重做、多选批量编辑。
 - 本地项目自动保存，支持 TeX、SVG、PNG 和 PDF 导出。
 - 同源 MathJax 公式资源，本地 LaTeX／中文 XeLaTeX 编译。
@@ -37,7 +39,7 @@ TIKZ_TEX_BIN_DIR=/usr/local/texlive/2026/bin/x86_64-linux bash install.sh
 
 ## 使用与升级
 
-新建项目，输入 TikZ 代码或从工具栏添加图形，选中对象后在右栏修改格式。项目自动保存；高级代码高级环境自动在主画布编译，也可使用 **LaTeX 编译预览**。
+新建项目，输入 TikZ 代码或从工具栏添加图形，选中对象后在右栏修改格式。项目自动保存；高级环境自动在主画布编译，也可使用 **LaTeX 编译预览**。
 
 ```bash
 tikz-bench start
@@ -67,23 +69,23 @@ tikz-bench rollback
 
 ## 本次重构的安装与验证
 
-右栏按“图形／文字”组织；拖动显示边缘、中心及等间距辅助线。格式刷持续开启，仅刷同类型组件的颜色、字号和线宽，再点按钮退出。新建项目先填写唯一名称和可选描述，取消不会创建记录。
+右栏按“图形／文字”组织，区分实际尺寸／中心位置、最小尺寸约束和文本宽度。拖动显示边缘、中心及等间距辅助线；Esc 取消当前拖动。矩阵双击进入单元格编辑，Esc 返回整体，再次 Esc 清除选择。格式刷持续开启，仅刷同类型组件的颜色、字号和线宽，再点按钮退出。新建项目先填写唯一名称和可选描述，取消不会创建记录。
 
 Forest、PGFPlots 和 Circuitikz 自动在主画布编译，已支持的对象通过源码映射选中编辑。任意自定义宏内部及 groupplot 的反向映射不支持；真实 TeX Live 2026 映射验收仍需目标环境验证。
 
-本次不迁移旧库，也不删除旧库。推送更新后，在 Ubuntu 源码目录执行：
+本次移动重构沿用当前数据库和配置，不修改数据库结构，不新建数据库，也不删除旧库。推送更新后，在 Ubuntu 源码目录执行：
 
 ```bash
 cd ~/tikz-bench &&
 git pull --ff-only &&
 nvm use 22 &&
-bash install.sh --database /var/lib/tikz-bench/tikz-bench-v2.sqlite &&
+bash install.sh &&
 tikz-bench start &&
 tikz-bench version &&
 tikz-bench status
 ```
 
-`--database` 使用 systemd 可写目录 `/var/lib/tikz-bench/` 内的绝对 `.sqlite` 路径。之后升级继续使用同一路径。健康检查和日志：
+无需手工卸载旧程序。健康检查和日志：
 
 ```bash
 curl -fsS http://127.0.0.1:5173/api/health
@@ -91,3 +93,5 @@ tikz-bench logs
 ```
 
 在源码目录且已有 TeX 工具位于 PATH 时，执行 `node --import tsx scripts/verify-editable-tex.mts`，验证三类高级组件的真实映射和 PDF 导出。安装器复用现有 TeX Live，不替换它。
+
+[移动重构审查记录](design/movement-refactor-review-2026-10-09.md)包含回归和性能结果。测试机上的 1000 对象场景达到选择、持续拖动门槛；松开拖动后，完成渲染仍需约 0.8–1.1 秒。

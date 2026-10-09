@@ -1,4 +1,4 @@
-import { Fragment, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement } from "react";
+import { memo, Fragment, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement } from "react";
 import type { EditHandle, NodeAnchorTarget } from "tikz-editor/semantic/types";
 import type { WorldPoint } from "../coords/types";
 import type { ResizeRole } from "tikz-editor/edit/actions";
@@ -644,7 +644,7 @@ export function NodePositionLinkOverlay({
   );
 }
 
-export function HitRegionLayer({
+export const HitRegionLayer = memo(function HitRegionLayer({
   hitRegions,
   hoveredElementId,
   toolMode,
@@ -889,7 +889,7 @@ export function HitRegionLayer({
       })}
     </g>
   );
-}
+});
 
 function isBucketPreviewRegion(region: HitRegion): boolean {
   return region.shape !== "rect";

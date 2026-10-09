@@ -1,3 +1,6 @@
+import { measureResize, previewResize } from "./resize-executor";
+import { planRotation, previewRotation } from "./rotation-executor";
+import { previewTranslation, commitTranslationPreview } from "./translation-executor";
 import { useResizePreference } from "../resize-preference";
 import { useEffect, useRef } from "react";
 import type { ElementTranslationPreview } from "./element-translation-preview";
@@ -52,9 +55,6 @@ import {
   formatTooltipGridCountRow,
   formatTooltipLengthRows,
   formatToolCreateLengthRows,
-  projectResizeDimensionsFromCenter,
-  projectResizeDimensionsFromOppositeCorner,
-  resolveFrameBasis,
   resolveHandleIdForDrag,
   resolveGridTooltipCounts,
   resolveToolCreateSize,
@@ -66,7 +66,6 @@ import { resolveEndpointAnchorSnap } from "./endpoint-anchor-snap";
 import { clientToWorldPoint, distanceSquared, worldToSvgPoint } from "./geometry";
 import { PATH_TOOL_BEND_DRAG_THRESHOLD_PX } from "./path-tool";
 import { resolveAddShapeOriginFromDrag } from "./add-shape-draft";
-import { angleDeg, normalizeSignedDeg, resolveDraggedRotateDeg } from "./rotate-handle";
 import type { ResizeFrame } from "./resize-frames";
 import { resolveScopeAwareMarqueeSelection } from "./scope-overlay";
 import { toolCreateSnapKind } from "../tool-config";
@@ -77,9 +76,6 @@ import type {
 import type { NodeAnchorOverlayState } from "./types";
 import type { UseCanvasDragControllerParams } from "./useCanvasDragController.types";
 
-const ROTATE_SHIFT_SNAP_STEP_DEG = 15;
-const ROTATE_SOFT_SNAP_STEP_DEG = 90;
-const ROTATE_SOFT_SNAP_THRESHOLD_DEG = 7;
 const ADORNMENT_CENTER_SNAP_THRESHOLD_PT = 1;
 const GRID_RESIZE_STEP_EPSILON = 1e-9;
 const SNAP_FEEDBACK_EPSILON = 1e-6;
@@ -158,12 +154,19 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     drag.visualTranslation.restore(); drag.transaction.finish(true);
     setDragState(null); setSnapLines([]);
   }, [source, dragRef, setDragState, setSnapLines]);
+  useEffect(() => {
+    const drag = dragRef.current;
+    if ((drag?.kind === "resize" || drag?.kind === "rotate") && !drag.transaction.valid()) {
+      drag.transaction.finish(true); setDragState(null); setSnapLines([]);
+    }
+  });
   useEffect(() => () => {
     if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
     pointerFrame.current = null; pendingPointer.current = null;
     committedVisual.current?.preview.restore(); committedVisual.current = null;
     const drag = dragRef.current;
-    if (drag?.kind === "element") { drag.visualTranslation?.restore(); drag.transaction?.finish(true); }
+    if (drag?.kind === "element") drag.visualTranslation?.restore();
+    if (drag?.kind === "element" || drag?.kind === "resize" || drag?.kind === "rotate") drag.transaction?.finish(true);
   }, [dragRef]);
 
   useEffect(() => {
@@ -228,29 +231,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
       setNodeAnchorOverlay(null);
       setSnapLines([]);
       maybeTriggerSnapFeedback(false);
-      const rotateMode: "property" | "origin" | "center-pivot" = input.altKey
-        ? "center-pivot"
-        : drag.activeRotateMode === "center-pivot"
-          ? "origin"
-          : drag.activeRotateMode;
-      const useCenterPivotAngle = rotateMode === "center-pivot";
-      const currentPointerAngleDeg = angleDeg(
-        useCenterPivotAngle ? drag.centerPivotWorld : drag.centerWorld,
-        input.rawPoint
-      );
-      const nextRotate = resolveDraggedRotateDeg({
-        baseRotateDeg: drag.baseRotateDeg,
-        startPointerAngleDeg: useCenterPivotAngle
-          ? drag.startCenterPivotPointerAngleDeg
-          : drag.startPointerAngleDeg,
-        currentPointerAngleDeg,
-        shiftKey: input.shiftKey,
-        ctrlOrMetaKey: input.ctrlOrMetaKey,
-        shiftSnapStepDeg: ROTATE_SHIFT_SNAP_STEP_DEG,
-        magneticSnapStepDeg: ROTATE_SOFT_SNAP_STEP_DEG,
-        magneticSnapThresholdDeg: ROTATE_SOFT_SNAP_THRESHOLD_DEG,
-        roundToInteger: true
-      });
+      const rotation = planRotation(drag, input.rawPoint, input.shiftKey, input.ctrlOrMetaKey, input.altKey);
       logSnapDebug({
         phase: input.phase,
         snapshotMatchesSource: true,
@@ -261,35 +242,13 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
       setDragTooltip({
         kind: "rotate",
         anchor: input.tooltipAnchor,
-        rows: [formatTooltipAngleRow(nextRotate)]
+        rows: [formatTooltipAngleRow(rotation.angle)]
       });
 
-      if (
-        Math.abs(normalizeSignedDeg(nextRotate - drag.lastAppliedRotateDeg)) <= 1e-6 &&
-        rotateMode === drag.lastAppliedRotateMode
-      ) {
-        return;
-      }
-
-      const ok = applyActionWithFeedback(
-        {
-          kind: "rotateElement",
-          elementId: drag.sourceId,
-          targetId: rotateMode === "property" ? drag.elementId : drag.sourceId,
-          angleDeg: nextRotate,
-          mode: rotateMode,
-          baselineSource: drag.preEditBaselineSource
-        },
-        drag.historyMergeKey,
-        drag.latestSource
-      );
-      if (ok.sourceChanged) {
-        drag.lastAppliedRotateDeg = nextRotate;
-        drag.lastAppliedRotateMode = rotateMode;
-        drag.activeRotateMode = rotateMode === "center-pivot" ? "center-pivot" : rotateMode;
-        if (ok.newSource) {
-          drag.latestSource = ok.newSource;
-        }
+      try { previewRotation(drag, rotation, { activeFigureId: useEditorStore.getState().activeFigureId }); }
+      catch (error) {
+        setWarning(error instanceof Error ? error.message : String(error));
+        if (!drag.transaction.valid()) { drag.transaction.finish(true); setDragState(null); }
       }
     }
 
@@ -521,7 +480,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         return;
       }
 
-      if (!svgResult || (snapshotSource !== source && drag.kind !== "resize" && !(drag.kind === "element" && drag.transaction))) {
+      if (!svgResult || (snapshotSource !== source && drag.kind !== "resize" && drag.kind !== "rotate" && !(drag.kind === "element" && drag.transaction))) {
         setNodeAnchorOverlay(null);
         setSnapLines([]);
         maybeTriggerSnapFeedback(false);
@@ -541,23 +500,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         setSnapLines([]);
         maybeTriggerSnapFeedback(false);
         const liveFrame = liveResizeFramesRef.current.get(drag.elementId) ?? null;
-        const liveDimensions = liveFrame ? resolveFrameBasis(liveFrame) : null;
-        const dimensions = liveDimensions
-          ? { width: liveDimensions.width, height: liveDimensions.height }
-          : drag.measurementMode === "opposite-corner"
-            ? projectResizeDimensionsFromOppositeCorner(
-              world,
-              drag.initialFrame,
-              drag.role,
-              drag.preserveAspectRatio,
-              drag.preserveAspectDuringResize || event.shiftKey
-            )
-            : projectResizeDimensionsFromCenter(
-              world,
-              drag.initialFrame,
-              drag.preserveAspectRatio,
-              drag.preserveAspectDuringResize || event.shiftKey
-            );
+        const dimensions = measureResize(drag, world, event.shiftKey, liveFrame);
         setDragTooltip({
           kind: "resize",
           anchor: clientPointFromEvent(event),
@@ -571,43 +514,10 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
           lines: []
         });
 
-        if (drag.transaction) {
-          try { drag.transaction.preview((base) => {
-            const result = applyEditAction(base, [], {
-            kind: "resizeElement",
-            scaleContents: useResizePreference.getState().whole,
-            elementId: drag.elementId,
-            role: drag.role,
-            newWorld: world,
-            preserveAspect: event.shiftKey,
-            preserveAspectRatio: drag.preserveAspectRatio ?? undefined,
-            formatPrecision,
-            referenceBounds: resizeFrameWorldBounds(drag.initialFrame),
-            referenceScopeTransform: drag.elementId.startsWith("scope:")
-              ? drag.initialScopeTransform ?? undefined
-              : undefined
-          }, { parseOptions: { activeFigureId: useEditorStore.getState().activeFigureId } });
-            if (result.kind !== "success") throw new Error(result.kind === "error" ? result.message : result.reason);
-            return result.newSource;
-          }); } catch (error_) { setWarning(String(error_)); }
-        } else {
-        applyActionWithFeedback(
-          {
-            kind: "resizeElement",
-            scaleContents: useResizePreference.getState().whole,
-            elementId: drag.elementId,
-            role: drag.role,
-            newWorld: world,
-            preserveAspect: event.shiftKey,
-            preserveAspectRatio: drag.preserveAspectRatio ?? undefined,
-            formatPrecision,
-            referenceBounds: resizeFrameWorldBounds(drag.initialFrame),
-            referenceScopeTransform: drag.elementId.startsWith("scope:")
-              ? drag.initialScopeTransform ?? undefined
-              : undefined
-          },
-          drag.historyMergeKey
-        );
+        try { previewResize(drag, world, event.shiftKey, useResizePreference.getState().whole, resizeFrameWorldBounds(drag.initialFrame), { activeFigureId: useEditorStore.getState().activeFigureId }, formatPrecision); }
+        catch (error) {
+          setWarning(error instanceof Error ? error.message : String(error));
+          if (!drag.transaction.valid()) { drag.transaction.finish(true); setDragState(null); }
         }
         return;
       }
@@ -888,37 +798,15 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
           return;
         }
 
-        if (drag.transaction && drag.baselineHandles) {
-          if (drag.visualTranslation) {
-            drag.visualTranslation.move(totalDelta.x, totalDelta.y);
-            drag.lastAppliedTotalDelta = totalDelta;
-            return;
-          }
+        if (drag.transaction && drag.translation) {
           try {
-            drag.transaction.preview((base) => {
-              if (drag.translation) return drag.translation.apply(new Map(drag.elementIds.map((id) => [id, makeWorldPoint(totalDelta.x, totalDelta.y)]))).source;
-              const result = applyEditAction(base, drag.baselineHandles ?? [], {
-                kind: "moveElements", elementIds: drag.elementIds, delta: makeWorldPoint(totalDelta.x, totalDelta.y), formatPrecision
-              }, { parseOptions: { sourceFingerprint: drag.baselineHandles?.[0]?.sourceRef.sourceFingerprint } });
-              if (result.kind !== "success") throw new Error(result.kind === "error" ? result.message : result.reason);
-              return result.newSource;
-            });
+            previewTranslation(drag.transaction, drag.translation, drag.visualTranslation, makeWorldPoint(totalDelta.x, totalDelta.y));
             drag.lastAppliedTotalDelta = totalDelta;
-          } catch (error) { setWarning(error instanceof Error ? error.message : String(error)); }
+          } catch (error) { drag.visualTranslation?.restore(); drag.transaction.finish(true); setDragState(null); setSnapLines([]); setWarning(error instanceof Error ? error.message : String(error)); }
           return;
         }
-        const result = applyActionWithFeedback(
-          {
-            kind: "moveElements",
-            elementIds: drag.elementIds,
-            delta: makeWorldPoint(incremental.x, incremental.y),
-            formatPrecision
-          },
-          drag.historyMergeKey
-        );
-        if (result.sourceChanged) {
-          drag.lastAppliedTotalDelta = totalDelta;
-        }
+
+        setWarning("移动计划已失效，请重新选择对象。");
         return;
       }
 
@@ -1263,7 +1151,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         }
       }
 
-      const cleanupElementIds = drag.kind === "element" && drag.translation ? [] : propertyCleanupElementIdsForDrag(drag);
+      const cleanupElementIds = (drag.kind === "element" && drag.translation || drag.kind === "resize" || drag.kind === "rotate") ? [] : propertyCleanupElementIdsForDrag(drag);
       if ("historyMergeKey" in drag && typeof drag.historyMergeKey === "string" && cleanupElementIds.length > 0) {
         dispatch({
           type: "APPLY_EDIT_ACTION",
@@ -1277,16 +1165,13 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
         if (event.type === "pointercancel") drag.visualTranslation.restore();
         else {
           try {
-            const final = drag.translation.apply(new Map(drag.elementIds.map((id) => [id, makeWorldPoint(drag.lastAppliedTotalDelta.x, drag.lastAppliedTotalDelta.y)]))).source;
-            if (drag.transaction.preview(() => final)) {
-              if (final === snapshotSource) drag.visualTranslation.restore();
-              else committedVisual.current = { preview: drag.visualTranslation, source: final };
-            }
-            else drag.visualTranslation.restore();
+            const final = commitTranslationPreview(drag.transaction, drag.translation, makeWorldPoint(drag.lastAppliedTotalDelta.x, drag.lastAppliedTotalDelta.y));
+            if (final === snapshotSource) drag.visualTranslation.restore();
+            else committedVisual.current = { preview: drag.visualTranslation, source: final };
           } catch (error) { drag.visualTranslation.restore(); setWarning(error instanceof Error ? error.message : String(error)); }
         }
       }
-      if (drag.kind === "element" || drag.kind === "resize") drag.transaction?.finish(event.type === "pointercancel");
+      if (drag.kind === "element" || drag.kind === "resize" || drag.kind === "rotate") drag.transaction?.finish(event.type === "pointercancel");
       setNodeAnchorOverlay(null);
       setSnapLines([]);
       setDragTooltip(null);
@@ -1321,11 +1206,12 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
 
     function onWorldKeyDown(event: KeyboardEvent) {
       const drag = dragRef.current;
-      if (event.key === "Escape" && (drag?.kind === "element" || drag?.kind === "resize") && drag.transaction) {
+      if (event.key === "Escape" && (drag?.kind === "element" || drag?.kind === "resize" || drag?.kind === "rotate") && drag.transaction) {
         if (pointerFrame.current !== null) cancelAnimationFrame(pointerFrame.current);
         pointerFrame.current = null; pendingPointer.current = null;
         if (drag.kind === "element") drag.visualTranslation?.restore();
-        drag.transaction.finish(true); setDragState(null); setSnapLines([]); event.preventDefault(); return;
+        suppressNextBackgroundClickRef.current = true;
+        drag.transaction.finish(true); setDragState(null); setSnapLines([]); event.preventDefault(); event.stopImmediatePropagation(); return;
       }
       if (event.repeat) {
         return;
@@ -1339,7 +1225,8 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
 
     latestMoveHandler.current = processWorldPointerMove;
     function onWorldPointerMove(event: PointerEvent) {
-      if (dragRef.current?.kind !== "element" || !dragRef.current.translation) { processWorldPointerMove(event); return; }
+      const active = dragRef.current;
+      if (active?.kind !== "resize" && active?.kind !== "rotate" && !(active?.kind === "element" && active.translation)) { processWorldPointerMove(event); return; }
       pendingPointer.current = event;
       pointerFrame.current ??= requestAnimationFrame(() => {
         pointerFrame.current = null;
@@ -1352,6 +1239,11 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
     window.addEventListener("pointercancel", onWorldPointerUp);
     window.addEventListener("keydown", onWorldKeyDown, true);
     window.addEventListener("keyup", onWorldKeyUp, true);
+    function onWindowBlur() {
+      const drag = dragRef.current;
+      if (drag?.kind === "resize" || drag?.kind === "rotate" || drag?.kind === "element" && drag.transaction) onWorldPointerUp(new PointerEvent("pointerup", { pointerId: drag.pointerId }));
+    }
+    window.addEventListener("blur", onWindowBlur);
 
     return () => {
       window.removeEventListener("pointermove", onWorldPointerMove);
@@ -1359,6 +1251,7 @@ export function useCanvasDragController(params: UseCanvasDragControllerParams) {
       window.removeEventListener("pointercancel", onWorldPointerUp);
       window.removeEventListener("keydown", onWorldKeyDown, true);
       window.removeEventListener("keyup", onWorldKeyUp, true);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, [
     applyActionWithFeedback,

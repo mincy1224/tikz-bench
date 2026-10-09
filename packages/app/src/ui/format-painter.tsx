@@ -15,7 +15,7 @@ export function paintObject(id: string): boolean {
   try {
     const object = editableObjects(state.source, state.snapshot.scene?.elements, new Set([id]), state.snapshot.parseResult)[0];
     if (!object || object.type === "group") throw new Error("此对象不支持格式刷；组合请先选择内部对象。");
-    const source = applyFormat(state.source, object, painter.snapshot);
+    const source = applyFormat(state.source, object, painter.snapshot, { activeFigureId: state.activeFigureId });
     state.dispatch({ type: "COMMIT_PROPERTY_SOURCE", source, expectedSource: state.source, label: "格式刷" });
     painter.set(painter.snapshot, painter.documentId, "已应用格式；可继续点击同类型对象。");
   } catch (error) { painter.set(painter.snapshot, painter.documentId, error instanceof Error ? error.message : String(error)); }

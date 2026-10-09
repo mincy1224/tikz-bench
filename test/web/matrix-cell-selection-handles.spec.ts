@@ -64,7 +64,7 @@ describe("matrix-cell selection handles", () => {
     container.remove();
   });
 
-  it("shows no-op corner handles for selected matrix cells and suppresses rotate handle", async () => {
+  it("suppresses resize and rotate handles for layout-owned matrix cells", async () => {
     const source = String.raw`\begin{tikzpicture}
   \matrix[matrix of nodes,nodes={draw}] {
     A & B \\
@@ -97,15 +97,12 @@ describe("matrix-cell selection handles", () => {
 
     expect(updated).toBe(true);
 
-    expect(latest.resizeFrameSourceIds.has(matrixCellId)).toBe(true);
+    expect(latest.resizeFrameSourceIds.has(matrixCellId)).toBe(false);
     const cellResizeHandles = latest.handleDisplays.filter(
       (display: { kind: string; elementId?: string }) =>
         display.kind === "resize-element" && display.elementId === matrixCellId
     );
-    expect(cellResizeHandles).toHaveLength(4);
-    for (const handle of cellResizeHandles) {
-      expect(handle.cursor).toBe("not-allowed");
-    }
+    expect(cellResizeHandles).toHaveLength(0);
     const cellRotateHandles = latest.handleDisplays.filter(
       (display: { kind: string; elementId?: string }) =>
         display.kind === "rotate-element" && display.elementId === matrixCellId

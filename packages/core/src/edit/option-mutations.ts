@@ -37,6 +37,7 @@ export function applyOptionMutationsToTarget(
   if (mutations.size === 0) {
     return null;
   }
+  if (target.kind === "matrix-cell" && (!target.matrixOfNodes || !target.textSpan || !target.cellSpan)) return null;
   const serializationContext = resolveOptionSerializationContext(target);
 
   if (target.options && target.optionsSpan) {
@@ -50,7 +51,14 @@ export function applyOptionMutationsToTarget(
       format
     );
     if (replacement.length === 0) {
-      const oldSpan = target.optionsSpan;
+      let oldSpan = target.optionsSpan;
+      if (target.kind === "matrix-cell" && target.cellSpan && target.textSpan) {
+        let from = oldSpan.from - 1, to = oldSpan.to;
+        while (from >= target.cellSpan.from && /\s/u.test(source[from] ?? "")) from--;
+        while (to < target.cellSpan.to && /\s/u.test(source[to] ?? "")) to++;
+        to++; while (to < target.textSpan.from && /\s/u.test(source[to] ?? "")) to++;
+        oldSpan = { from, to };
+      }
       const updated = replaceSpan(source, oldSpan, "");
       if (updated.source === source) {
         return null;
@@ -92,10 +100,11 @@ export function applyOptionMutationsToTarget(
     return null;
   }
 
-  const replacement = wrapSerializedOptions(entriesToInsert.join(", "), target.optionsFormat ?? "bracketed");
+  const options = wrapSerializedOptions(entriesToInsert.join(", "), target.optionsFormat ?? "bracketed");
+  const replacement = target.kind === "matrix-cell" ? `|${options}| ` : options;
   const oldSpan: Span = {
-    from: target.insertOffset,
-    to: target.insertOffset
+    from: target.kind === "matrix-cell" ? target.textSpan!.from : target.insertOffset,
+    to: target.kind === "matrix-cell" ? target.textSpan!.from : target.insertOffset
   };
   const updated = replaceSpan(source, oldSpan, replacement);
   if (updated.source === source) {

@@ -6,7 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { pt, worldPoint } from "tikz-editor/coords/index";
-import { snapKeyboardNudge, type SnapLine } from "tikz-editor/edit/snapping";
+import type { SnapLine } from "tikz-editor/edit/snapping";
 import type { SceneElement } from "tikz-editor/semantic/types";
 import type { SvgViewBox } from "tikz-editor/svg/types";
 import type { EditorPlatform } from "../../platform/types";
@@ -32,7 +32,7 @@ import {
   dataTransferHasFilePayload,
   findSvgFileInDataTransfer
 } from "../svg-import";
-import { selectNudgeAnchorHandle } from "./panel-helpers";
+import { useMatrixEditing } from "./matrix-editing";
 import { useKeyboardNudge } from "./useKeyboardNudge";
 import type {
   ApplyActionWithFeedbackFn,
@@ -183,6 +183,12 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
 
       if (event.key === "Escape") {
         if (keyboardNudge.cancel()) { event.preventDefault(); return; }
+        const matrixEditing = useMatrixEditing.getState();
+        if (matrixEditing.matrixId) {
+          closeTextEditingSession();
+          dispatch({ type: "SELECT", id: matrixEditing.matrixId, additive: false });
+          matrixEditing.leave(); event.preventDefault(); return;
+        }
         if (toolMode === "addPath") {
           finalizePathDraft(false);
           setWarning(null);
@@ -309,19 +315,8 @@ export function useCanvasKeyboardClipboard(args: UseCanvasKeyboardClipboardArgs)
         return;
       }
 
-      const selectedSet = new Set(selectedIds);
-      const elementHandles = snapshot.editHandles.filter((handle) => selectedSet.has(handle.sourceRef.sourceId));
-      const anchorHandle = selectNudgeAnchorHandle(elementHandles);
-      const snapped = snapKeyboardNudge({
-        anchor: anchorHandle?.world ?? null,
-        axis,
-        direction,
-        step
-      });
-      const delta = snapped.snappedDelta ??
-        (axis === "x"
-          ? worldPoint(pt(direction * step), pt(0))
-          : worldPoint(pt(0), pt(direction * step)));
+      const delta = axis === "x" ? worldPoint(pt(direction * step), pt(0)) : worldPoint(pt(0), pt(direction * step));
+      const snapped = { snappedDelta: delta, lines: [] as SnapLine[], offset: worldPoint(pt(0), pt(0)) };
 
       keyboardNudge.nudge(event.key, delta.x, delta.y, selectedIds, snapshot.editHandles);
       setSnapLines(snapped.lines);

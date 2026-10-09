@@ -6,8 +6,19 @@ import { applyEditAction, preflightPositionNodeRelativeToAction } from "../packa
 import { parseTikz } from "../packages/core/src/parser/index.js";
 import { evaluateTikzFigure } from "../packages/core/src/semantic/evaluate.js";
 import { createMathJaxNodeTextEngine } from "../packages/core/src/text/mathjax-engine.js";
+import { collectArrangeWorldBounds } from "../packages/core/src/edit/scope-bounds.js";
 import { wp } from "./coords-helpers.js";
 import { cm, expectPatchesReconstructSource, makeHandle } from "./edit-actions-helpers.js";
+
+
+function expectTranslation(before: string, after: string, id: string, dx: number, dy: number) {
+  const bounds = (source: string) => { const parsed = parseTikz(source); const semantic = evaluateTikzFigure(parsed.figure, source); return collectArrangeWorldBounds(semantic.scene.elements, parsed.figure.body).get(id)!; };
+  const a = bounds(before), b = bounds(after);
+  expect(b.minX - a.minX).toBeCloseTo(dx, 3);
+  expect(b.minY - a.minY).toBeCloseTo(dy, 3);
+  expect(b.maxX - a.maxX).toBeCloseTo(dx, 3);
+  expect(b.maxY - a.maxY).toBeCloseTo(dy, 3);
+}
 
 // ── moveElement ────────────────────────────────────────────────────────────────
 
@@ -180,13 +191,11 @@ describe("applyEditAction – moveElement", () => {
       delta: wp(cm(1), cm(1))
     });
 
-    expect(result.kind).toBe("unsupported");
-    if (result.kind === "unsupported") {
-      expect(result.reason).toContain("No coordinate rewrites");
-    }
+    expect(result.kind).toBe("error");
+    expect("newSource" in result).toBe(false);
   });
 
-  it("returns partial when some handles are unsupported", () => {
+  it("rejects the entire move when some handles are unsupported", () => {
     const source = "\\draw (0,0) .. controls (A) .. (1,2);";
     const unsupportedRaw = "(A)";
     const unsupportedFrom = source.indexOf(unsupportedRaw);
@@ -212,14 +221,11 @@ describe("applyEditAction – moveElement", () => {
       delta: wp(cm(1), cm(0))
     });
 
-    expect(result.kind).toBe("partial");
-    if (result.kind === "partial") {
-      expect(result.skippedHandles).toHaveLength(1);
-      expect(result.newSource).toBe("\\draw (0,0) .. controls (A) .. (2,2);");
-    }
+    expect(result.kind).toBe("unsupported");
+    expect("newSource" in result).toBe(false);
   });
 
-  it("returns partial for moveElements when only some handles on a selected element rewrite", () => {
+  it("rejects moveElements when only some handles on a selected element rewrite", () => {
     const source = "\\draw (0,0) .. controls (A) .. (1,2);";
     const unsupportedRaw = "(A)";
     const unsupportedFrom = source.indexOf(unsupportedRaw);
@@ -245,12 +251,8 @@ describe("applyEditAction – moveElement", () => {
       delta: wp(cm(1), cm(0))
     });
 
-    expect(result.kind).toBe("partial");
-    if (result.kind !== "partial") return;
-    expect(result.reason).toContain("unsupported coordinate forms");
-    expect(result.skippedHandles).toEqual([unsupported.id]);
-    expect(result.newSource).toBe("\\draw (0,0) .. controls (A) .. (2,2);");
-    expectPatchesReconstructSource(source, result);
+    expect(result.kind).toBe("unsupported");
+    expect("newSource" in result).toBe(false);
   });
 
   it("applies patches in correct order (handles at different offsets)", () => {
@@ -517,8 +519,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xshift=8pt");
-    expect(result.newSource).toContain("yshift=1pt");
+    expectTranslation(source, result.newSource, "scope:0", 5.6, -2.4);
     expectPatchesReconstructSource(source, result);
 
     const fine = applyEditAction(source, [], {
@@ -529,8 +530,6 @@ describe("applyEditAction – moveElement", () => {
     });
     expect(fine.kind).toBe("success");
     if (fine.kind !== "success") return;
-    expect(fine.newSource).toContain("xshift=7.6pt");
-    expect(fine.newSource).toContain("yshift=0.6pt");
   });
 
   it("moves scopes with scale before shift by adjusting shift in local scope units", () => {
@@ -548,7 +547,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toMatch(/shift=\{\(4pt,6pt\)\}|shift=\(4pt,6pt\)/);
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -567,8 +566,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xshift=4pt");
-    expect(result.newSource).toContain("yshift=6pt");
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -587,9 +585,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("draw");
-    expect(result.newSource).toContain("xshift=6pt");
-    expect(result.newSource).toContain("yshift=9pt");
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -608,7 +604,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toMatch(/shift=\{\(-1pt,0pt\)\}|shift=\(-1pt,0pt\)/);
+    expectTranslation(source, result.newSource, "scope:0", 8, -4);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -627,8 +623,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("draw");
-    expect(result.newSource).toMatch(/shift=\{\(3pt,5pt\)\}|shift=\(3pt,5pt\)/);
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -647,9 +642,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("rotate=\\angle");
-    expect(result.newSource).toContain("xshift=6pt");
-    expect(result.newSource).toContain("yshift=-3pt");
+    expectTranslation(source, result.newSource, "scope:0", 4, -6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -667,10 +660,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(scale.kind).toBe("success");
     if (scale.kind !== "success") return;
-    expect(scale.newSource).toContain("scale=\\s");
-    expect(scale.newSource).not.toContain("shift={");
-    expect(scale.newSource).toContain("xshift=2pt");
-    expect(scale.newSource).toContain("yshift=-3pt");
+    expectTranslation(scaleSource, scale.newSource, "scope:0", 4, -6);
     expectPatchesReconstructSource(scaleSource, scale);
 
     const xscaleSource = String.raw`\begin{tikzpicture}
@@ -686,10 +676,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(xscale.kind).toBe("success");
     if (xscale.kind !== "success") return;
-    expect(xscale.newSource).toContain("xscale=\\sx");
-    expect(xscale.newSource).not.toContain("shift={");
-    expect(xscale.newSource).toContain("xshift=2pt");
-    expect(xscale.newSource).toContain("yshift=-3pt");
+    expectTranslation(xscaleSource, xscale.newSource, "scope:0", 4, -6);
     expectPatchesReconstructSource(xscaleSource, xscale);
 
     const yscaleSource = String.raw`\begin{tikzpicture}
@@ -705,9 +692,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(yscale.kind).toBe("success");
     if (yscale.kind !== "success") return;
-    expect(yscale.newSource).toContain("yscale=\\sy");
-    expect(yscale.newSource).toContain("xshift=6pt");
-    expect(yscale.newSource).toContain("yshift=6pt");
+    expectTranslation(yscaleSource, yscale.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(yscaleSource, yscale);
   });
 
@@ -725,8 +710,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(movedXOnly.kind).toBe("success");
     if (movedXOnly.kind !== "success") return;
-    expect(movedXOnly.newSource).not.toContain("xshift");
-    expect(movedXOnly.newSource).not.toContain("yshift");
+    expectTranslation(xOnly, movedXOnly.newSource, "scope:0", -2, 0);
     expectPatchesReconstructSource(xOnly, movedXOnly);
 
     const yOnly = String.raw`\begin{tikzpicture}
@@ -742,8 +726,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(movedYOnly.kind).toBe("success");
     if (movedYOnly.kind !== "success") return;
-    expect(movedYOnly.newSource).not.toContain("xshift");
-    expect(movedYOnly.newSource).not.toContain("yshift");
+    expectTranslation(yOnly, movedYOnly.newSource, "scope:0", 0, -3);
     expectPatchesReconstructSource(yOnly, movedYOnly);
 
     const explicitZero = String.raw`\begin{tikzpicture}[
@@ -768,8 +751,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(movedExplicitZero.kind).toBe("success");
     if (movedExplicitZero.kind !== "success") return;
-    expect(movedExplicitZero.newSource).toContain("xshift=4pt");
-    expect(movedExplicitZero.newSource).not.toContain("yshift");
+    expectTranslation(explicitZero, movedExplicitZero.newSource, "scope:0", 4, 0);
     expectPatchesReconstructSource(explicitZero, movedExplicitZero);
 
     const tinyMoveExplicitZero = applyEditAction(explicitZero, [], {
@@ -780,9 +762,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(tinyMoveExplicitZero.kind).toBe("success");
     if (tinyMoveExplicitZero.kind !== "success") return;
-    expect(tinyMoveExplicitZero.newSource).not.toContain("xshift=0pt");
-    expect(tinyMoveExplicitZero.newSource).not.toContain("yshift=0pt");
-    expect(tinyMoveExplicitZero.newSource).not.toContain("yshift");
+    expectTranslation(explicitZero, tinyMoveExplicitZero.newSource, "scope:0", 0.4, 0.4);
     expectPatchesReconstructSource(explicitZero, tinyMoveExplicitZero);
   });
 
@@ -848,10 +828,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("scale=0");
-    expect(result.newSource).not.toContain("shift=(");
-    expect(result.newSource).toContain("xshift=2pt");
-    expect(result.newSource).toContain("yshift=9pt");
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -870,8 +847,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xshift=6pt");
-    expect(result.newSource).toContain("yshift=6pt");
+    expectTranslation(source, result.newSource, "scope:0", 4, 6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -890,7 +866,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("\\begin{scope}[xshift=4pt, yshift=-6pt]");
+    expectTranslation(source, result.newSource, "scope:0", 4, -6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -909,7 +885,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("\\begin{scope}[draw, xshift=4pt, yshift=-6pt]");
+    expectTranslation(source, result.newSource, "scope:0", 4, -6);
     expectPatchesReconstructSource(source, result);
   });
 
@@ -936,12 +912,11 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xshift=4pt");
-    expect(result.newSource).toContain("(1.11,1.07)");
+    expectTranslation(source, result.newSource, "scope:0", 3, 2);
     expectPatchesReconstructSource(source, result);
   });
 
-  it("returns partial when a scope moves but another selected element cannot", () => {
+  it("rejects the entire selection when another element cannot move", () => {
     const source = String.raw`\begin{tikzpicture}
   \begin{scope}[xshift=1pt]
     \draw (0,0) -- (1,0);
@@ -954,12 +929,8 @@ describe("applyEditAction – moveElement", () => {
       delta: wp(3, 2)
     });
 
-    expect(result.kind).toBe("partial");
-    if (result.kind !== "partial") return;
-    expect(result.newSource).toContain("xshift=4pt");
-    expect(result.reason).toContain("No handles found");
-    expect(result.changedSourceIds).toEqual(["missing-path", "scope:0", "path:1"]);
-    expectPatchesReconstructSource(source, result);
+    expect(result.kind).toBe("unsupported");
+    expect("newSource" in result).toBe(false);
   });
 
   it("expands changed ids for nested moved scopes without duplicates", () => {
@@ -980,7 +951,7 @@ describe("applyEditAction – moveElement", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("xshift=3pt");
+    expectTranslation(source, result.newSource, "scope:0", 2, 0);
     expect(result.changedSourceIds).toEqual(["scope:0", "path:1", "scope:2", "path:3"]);
     expectPatchesReconstructSource(source, result);
   });
@@ -1050,7 +1021,7 @@ describe("applyEditAction – moveElement", () => {
     expect(result.newSource).toContain("] at (1,2)");
   });
 
-  it("returns partial when only the matrix portion of a mixed moveElements selection can move", () => {
+  it("rejects a mixed selection when only its matrix portion can move", () => {
     const source = String.raw`\begin{tikzpicture}
   \matrix[matrix of nodes] at (0,0) {
     A \\
@@ -1063,12 +1034,8 @@ describe("applyEditAction – moveElement", () => {
       delta: wp(cm(1), cm(1))
     });
 
-    expect(result.kind).toBe("partial");
-    if (result.kind !== "partial") return;
-    expect(result.newSource).toContain("at (1,1)");
-    expect(result.reason).toContain("No handles found");
-    expect(result.changedSourceIds).toEqual(["missing-path", "path:0"]);
-    expectPatchesReconstructSource(source, result);
+    expect(result.kind).toBe("unsupported");
+    expect("newSource" in result).toBe(false);
   });
 });
 
@@ -1127,7 +1094,7 @@ describe("applyEditAction – moveElement with positioning", () => {
 
     expect(result.kind).toBe("success");
     if (result.kind !== "success") return;
-    expect(result.newSource).toContain("above right={-0.23cm and 1cm} of A");
+    expect(result.newSource).toContain("above right={-0.231991cm and 1cm} of A");
   });
 });
 

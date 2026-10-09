@@ -10,6 +10,8 @@ TikZ Bench is an independently maintained derivative of [TikZ Editor](https://gi
 
 - Shapes, paths, curves, text, groups and anchor connections; edge, center and equal-spacing guides while dragging.
 - Multipart rectangles with horizontal or vertical sections, individual content and fills.
+- Matrices: click to move the whole matrix, double-click to edit a cell; layout resizing and separate content scaling.
+- World-space movement for nested transformed groups and anchored matrices; arrow keys move 1pt (Shift: 10pt), independently of the grid.
 - A shape/text format panel, exact font sizes, colors, line widths, independently sized arrowheads and multi-selection editing.
 - A persistent format painter for matching component types; each gesture is one undo step.
 - Local projects with automatic saving; TeX, SVG, PNG and PDF export.
@@ -38,7 +40,7 @@ A fresh installation starts automatically. Open **http://localhost:5173**. Exist
 
 ## Use and upgrade
 
-Create a project with a required unique name and optional description, then enter TikZ code or add shapes from the toolbar. Select objects to edit the shape/text format panel. Projects save after committed edits. Supported Forest, PGFPlots and Circuitikz environments compile automatically on the main canvas; mapped objects expose source properties and supported data points can be dragged. Custom macro internals and groupplot mappings are not reverse editable. Real TeX mapping acceptance is pending; this is not a claim of arbitrary LaTeX editability.
+Create a project with a required unique name and optional description, then enter TikZ code or add shapes from the toolbar. Select objects to edit the shape/text format panel. Actual dimensions and center coordinates are separate from minimum-size and text-width constraints. Press Esc to cancel a drag; matrix cell editing returns to the whole matrix on Esc, then clears selection on another Esc. Projects save after committed edits. Supported Forest, PGFPlots and Circuitikz environments compile automatically on the main canvas; mapped objects expose source properties and supported data points can be dragged. Custom macro internals and groupplot mappings are not reverse editable. Real TeX mapping acceptance is pending; this is not a claim of arbitrary LaTeX editability.
 
 ```bash
 tikz-bench start
@@ -54,19 +56,19 @@ tikz-bench rollback
 
 To upgrade, run `git pull --ff-only` in your source checkout, then `bash install.sh` again. Alternatively, `tikz-bench upgrade /path/to/tikz-bench-source` builds and installs that checkout. `rollback` switches programs without replacing the database; backup restores the original running/stopped state.
 
-For this refactor, use a separate fresh database. Existing databases are kept; there is no schema migration:
+This movement refactor keeps your current database and service configuration. After pushing the update to your repository, reinstall from source:
 
 ```bash
 cd ~/tikz-bench &&
 git pull --ff-only &&
 nvm use 22 &&
-bash install.sh --database /var/lib/tikz-bench/tikz-bench-v2.sqlite &&
+bash install.sh &&
 tikz-bench start &&
 tikz-bench version &&
 tikz-bench status
 ```
 
-`--database` accepts an absolute `.sqlite` path inside `/var/lib/tikz-bench/`, the writable systemd state directory. Reuse the same path for later upgrades. Check `curl -fsS http://127.0.0.1:5173/api/health` and `tikz-bench logs`. With your TeX tools on PATH, run `node --import tsx scripts/verify-editable-tex.mts` from the source checkout to validate the actual Forest/plot/circuit mappings and PDF export.
+There is no database/schema change and no need to uninstall first. Check `curl -fsS http://127.0.0.1:5173/api/health` and `tikz-bench logs`. With your TeX tools on PATH, run `node --import tsx scripts/verify-editable-tex.mts` from the source checkout to validate the actual Forest/plot/circuit mappings and PDF export.
 
 Programs: `/opt/tikz-bench/releases/`. Configuration: `/etc/default/tikz-bench`. Default database: `/var/lib/tikz-bench/tikz-bench.sqlite`. The service listens on `127.0.0.1:5173` by default.
 
@@ -75,6 +77,8 @@ Programs: `/opt/tikz-bench/releases/`. Configuration: `/etc/default/tikz-bench`.
 With Node.js 22.13+ and npm 10.5+, run `npm ci` then `npm run dev:full` from the repository root. For a production build without installing a service, run `npm run build` followed by `npm run build:full`. System installation requires Linux; development builds can also run on Windows.
 
 See [server configuration](apps/server/README.md) and [source installation details](design/build-and-upgrade.md).
+
+The [movement refactor review](design/movement-refactor-review-2026-10-09.md) records regression coverage and performance measurements. The tested 1000-object scene meets the selection and drag-frame targets; releasing a drag still takes about 0.8–1.1 seconds to finish rendering on the test machine.
 
 ## License
 

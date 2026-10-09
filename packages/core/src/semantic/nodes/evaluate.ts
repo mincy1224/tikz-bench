@@ -12,10 +12,7 @@ import {
 } from "../context.js";
 import { evaluateRawCoordinate } from "../coords/evaluate.js";
 import {
-  currentAnchorForDirection,
-  resolveNodePositioningTarget,
-  targetAnchorForDirection,
-  type PositioningDirection
+  resolveNodePositioningTarget
 } from "../path/node-positioning.js";
 import {
   resolvePathAttachedNodeRegime,
@@ -38,7 +35,7 @@ import {
   type StyleSourceRef,
   type StyleTraceLayerInput
 } from "../style-chain.js";
-import { nodeAnchorOffset, placeNodeCenter, registerNamedNodeAnchors } from "./anchors.js";
+import { placeNodeCenter, registerNamedNodeAnchors } from "./anchors.js";
 import {
   applyNodeBoxPaintMode,
   makeCircleElement,
@@ -72,6 +69,7 @@ import {
   resolveNodeBoxPaintMode
 } from "./elements.js";
 import { adjustNodeLayoutForShape, resolveNodeLayout } from "./layout.js";
+import { computePositioningAnchorOffsetsByDirection } from "./positioning-geometry.js";
 import { evaluateMatrixNodeItem, resolveMatrixMode } from "./matrix.js";
 import { collectScopedNodeNames } from "./named-coordinates.js";
 import {
@@ -114,22 +112,11 @@ import {
   resolveTwoPartSplitTextPosition
 } from "./multipart-layout.js";
 import { splitTopLevelCommas } from "./raw-list.js";
-import { applyMatrixToVector, identityMatrix, multiplyMatrix, rotationMatrix } from "../transform.js";
+import { identityMatrix, multiplyMatrix, rotationMatrix } from "../transform.js";
 
 function wp(x: number, y: number): WorldPoint {
   return worldPoint(pt(x), pt(y));
 }
-
-const CONTINUOUS_POSITIONING_DIRECTIONS: PositioningDirection[] = [
-  "above",
-  "below",
-  "left",
-  "right",
-  "above left",
-  "above right",
-  "below left",
-  "below right"
-];
 
 export type NodeAnchorExtents = {
   left: number;
@@ -139,58 +126,6 @@ export type NodeAnchorExtents = {
   halfWidth: number;
   halfHeight: number;
 };
-
-function computePositioningAnchorOffsetsByDirection(params: {
-  targetNodeName: string;
-  targetCenter: WorldPoint;
-  currentCenter: WorldPoint;
-  context: SemanticContext;
-  legacyOf: boolean;
-  nodeShape: NodeShape;
-  nodeLayout: ReturnType<typeof adjustNodeLayoutForShape>;
-  nodeOptions: OptionListAst | undefined;
-  nodeTransform: WorldTransform;
-}): Record<string, { targetAnchor: WorldPoint; currentAnchor: WorldPoint }> {
-  const {
-    targetNodeName,
-    targetCenter,
-    context,
-    legacyOf,
-    nodeShape,
-    nodeLayout,
-    nodeOptions,
-    nodeTransform
-  } = params;
-  const offsets: Record<string, { targetAnchor: WorldPoint; currentAnchor: WorldPoint }> = {};
-
-  for (const direction of CONTINUOUS_POSITIONING_DIRECTIONS) {
-    const currentAnchor = applyMatrixToVector(
-      nodeTransform,
-      nodeAnchorOffset(nodeShape, nodeLayout, currentAnchorForDirection(direction), nodeOptions)
-    );
-    let targetAnchor: WorldPoint = worldPoint(pt(0), pt(0));
-
-    if (!legacyOf) {
-      const targetAnchorWorldPoint = evaluateRawCoordinate(
-        `(${targetNodeName}.${targetAnchorForDirection(direction)})`,
-        context
-      ).world;
-      if (targetAnchorWorldPoint) {
-        targetAnchor = worldPoint(
-          pt(targetAnchorWorldPoint.x - targetCenter.x),
-          pt(targetAnchorWorldPoint.y - targetCenter.y)
-        );
-      }
-    }
-
-    offsets[direction] = {
-      targetAnchor,
-      currentAnchor: wp(currentAnchor.x, currentAnchor.y)
-    };
-  }
-
-  return offsets;
-}
 
 export function measureNodeAnchorExtents(
   item: NodeItem,

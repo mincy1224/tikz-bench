@@ -1,3 +1,4 @@
+import { buildPlacementGeometry } from "./placement-geometry.js";
 import type { Span, TikzFigure } from "../ast/types.js";
 import type { Diagnostic } from "../diagnostics/types.js";
 import {
@@ -363,6 +364,7 @@ function evaluateIncrementalSuffix(args: {
     editHandleSource: previous.editHandles
   });
   retargetEditHandlesSourceFingerprint(run.context.editHandles, run.context.sourceFingerprint);
+  retargetFigureStyleSources(run.context.stack, `figure:${run.figure.span.from}:${run.figure.span.to}`);
   assignFeatureUsage(run.featureUsage, startFeatureUsage);
   run.diagnostics.length = run.baseDiagnosticsCount;
   for (let index = 0; index < restoreIndex; index += 1) {
@@ -461,6 +463,7 @@ function evaluateSelectively(args: {
     editHandleSource: previous.editHandles
   });
   retargetEditHandlesSourceFingerprint(run.context.editHandles, run.context.sourceFingerprint);
+  retargetFigureStyleSources(run.context.stack, `figure:${run.figure.span.from}:${run.figure.span.to}`);
   assignFeatureUsage(run.featureUsage, startFeatureUsage);
   run.diagnostics.length = run.baseDiagnosticsCount;
 
@@ -604,6 +607,7 @@ function assembleSelectiveSemanticResult(args: {
       run.source,
       sourceFingerprint
     );
+    retargetFigureStyleSources(materialized, `figure:${run.figure.span.from}:${run.figure.span.to}`);
     elements.push(...materialized.elements);
     editHandles.push(...materialized.editHandles);
     diagnostics.push(...fragment.diagnostics);
@@ -631,6 +635,8 @@ function assembleSelectiveSemanticResult(args: {
 
   return {
     scene,
+    statementParentFrames: new Map(run.context.statementParentFrames),
+    placements: buildPlacementGeometry(run.figure.body, run.context.statementParentFrames, editHandles, elements),
     diagnostics,
     featureUsage: finalFeatureUsage,
     editHandles,
@@ -1127,4 +1133,13 @@ function isSpanLike(value: object): value is Span {
     typeof (value as { to?: unknown }).to === "number" &&
     Object.keys(value).every((key) => key === "from" || key === "to")
   );
+}
+
+/** Reused style provenance belongs to the current figure inventory, even when
+ * editing a coordinate changes the figure's ending offset. */
+function retargetFigureStyleSources(value: unknown, sourceId: string, seen = new WeakSet<object>()): void {
+  if (!value || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  if ("sourceKind" in value && value.sourceKind === "figure-options" && "sourceId" in value) value.sourceId = sourceId;
+  for (const [key, child] of Object.entries(value)) if (key !== "identityRef") retargetFigureStyleSources(child, sourceId, seen);
 }

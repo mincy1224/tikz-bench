@@ -298,7 +298,7 @@ describe("edit handles", () => {
     expect(posHandles).toHaveLength(0);
   });
 
-  it("matrix without explicit placement does not emit synthetic node-position handles", () => {
+  it("matrix without explicit placement exposes an origin placement handle", () => {
     const source = String.raw`\begin{tikzpicture}
 \matrix[matrix of nodes] {
   A & B \\
@@ -307,7 +307,8 @@ describe("edit handles", () => {
 \end{tikzpicture}`;
     const result = evaluate(source);
     const nodeHandles = result.editHandles.filter((handle) => handle.kind === "node-position");
-    expect(nodeHandles).toHaveLength(0);
+    expect(nodeHandles).toHaveLength(1)
+    expect(nodeHandles[0].world).toEqual({ x: 0, y: 0 });
   });
 
   it("matrix with inline at emits a single movable node-position handle", () => {

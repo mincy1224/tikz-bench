@@ -953,7 +953,14 @@ export function App({ project }: AppProps = {}) {
     () => lastEditChangedSourceIds ?? (activeSourceScrubSourceId ? [activeSourceScrubSourceId] : null),
     [activeSourceScrubSourceId, lastEditChangedSourceIds]
   );
-  const trigger = computeTrigger(activeCanvasDragKind, activeSourceScrubSourceId);
+  const gestureTrigger = computeTrigger(activeCanvasDragKind, activeSourceScrubSourceId);
+  // Pointer/key release and source commit can be batched into one React render.
+  // A completed structured edit still has valid patches; don't lose its fast
+  // path merely because the gesture has already ended.
+  const trigger = gestureTrigger === "other" && changedSourceIds?.length && lastEditPatches?.length ? "drag-element" : gestureTrigger;
+  // Retain the canvas coordinate origin through release. Re-basing the viewBox
+  // to the new outer bounds would rewrite every SVG part and hit region even
+  // when only a handful of objects moved. Exports still render current bounds.
   const isDragComputeTrigger = trigger === "drag-element" || trigger === "drag-handle";
   if (isDragComputeTrigger && !dragRenderViewBoxRef.current && snapshot.svg?.viewBox) {
     dragRenderViewBoxRef.current = snapshot.svg.viewBox;
@@ -965,11 +972,18 @@ export function App({ project }: AppProps = {}) {
     ? (source.length > 80_000 ? 220 : 120)
     : null;
 
+  const lastRenderRequest = useRef<{ documentId: string; figureId: string | null; source: string; font: typeof mathJaxFont; viewBox: typeof renderViewBox } | null>(null);
+  const hasSameRenderInput = useCallback(() => {
+    const last = lastRenderRequest.current;
+    return last?.documentId === activeDocumentId && last.figureId === activeFigureId && last.source === source && last.font === mathJaxFont && (last.viewBox === renderViewBox || isDragComputeTrigger && last.viewBox === null);
+  }, [activeDocumentId, activeFigureId, source, mathJaxFont, renderViewBox, isDragComputeTrigger]);
   useEffect(() => {
     const scheduler = computeSchedulerRef.current;
     if (!scheduler || typingComputeDelay != null) {
       return;
     }
+    if (hasSameRenderInput()) return;
+    lastRenderRequest.current = { documentId: activeDocumentId, figureId: activeFigureId, source, font: mathJaxFont, viewBox: renderViewBox };
     setMathJaxFont(mathJaxFont);
     scheduler.schedule({
       id: crypto.randomUUID(),
@@ -984,13 +998,15 @@ export function App({ project }: AppProps = {}) {
       trigger,
       renderViewBox
     });
-  }, [activeDocumentId, activeFigureId, changedSourceIds, dispatch, lastEditPatchBaseRevision, lastEditPatches, mathJaxFont, renderViewBox, source, sourceRevision, trigger, typingComputeDelay]);
+  }, [activeDocumentId, activeFigureId, changedSourceIds, dispatch, hasSameRenderInput, lastEditPatchBaseRevision, lastEditPatches, mathJaxFont, renderViewBox, source, sourceRevision, trigger, typingComputeDelay]);
 
   useDebouncedEffect(() => {
     const scheduler = computeSchedulerRef.current;
     if (!scheduler || typingComputeDelay == null) {
       return;
     }
+    if (hasSameRenderInput()) return;
+    lastRenderRequest.current = { documentId: activeDocumentId, figureId: activeFigureId, source, font: mathJaxFont, viewBox: renderViewBox };
     setMathJaxFont(mathJaxFont);
     scheduler.schedule({
       id: crypto.randomUUID(),
@@ -1004,62 +1020,8 @@ export function App({ project }: AppProps = {}) {
       patchBaseRevision: lastEditPatchBaseRevision,
       trigger
     });
-  }, typingComputeDelay, [activeDocumentId, activeFigureId, changedSourceIds, dispatch, lastEditPatchBaseRevision, lastEditPatches, mathJaxFont, source, sourceRevision, trigger, typingComputeDelay]);
+  }, typingComputeDelay, [activeDocumentId, activeFigureId, changedSourceIds, dispatch, hasSameRenderInput, lastEditPatchBaseRevision, lastEditPatches, mathJaxFont, renderViewBox, source, sourceRevision, trigger, typingComputeDelay]);
 
-  useEffect(() => {
-    let prewarmTimer: number | null = null;
-
-    const clearPrewarmTimer = () => {
-      if (prewarmTimer == null) {
-        return;
-      }
-      window.clearTimeout(prewarmTimer);
-      prewarmTimer = null;
-    };
-
-    const isPrewarmable = (state: ReturnType<typeof useEditorStore.getState>, hoveredElementId: string | null): hoveredElementId is string => (
-      state.activeCanvasDragKind == null &&
-      state.activeSourceScrubSourceId == null &&
-      state.pendingRequestId == null &&
-      hoveredElementId != null &&
-      state.snapshot.source === state.source
-    );
-
-    const scheduleFromState = (state: ReturnType<typeof useEditorStore.getState>) => {
-      const hoveredElementId = state.hoveredElementId;
-      clearPrewarmTimer();
-      if (!isPrewarmable(state, hoveredElementId)) {
-        return;
-      }
-      prewarmTimer = window.setTimeout(() => {
-        prewarmTimer = null;
-        const latest = useEditorStore.getState();
-        if (latest.hoveredElementId !== hoveredElementId || !isPrewarmable(latest, hoveredElementId)) {
-          return;
-        }
-        const scheduler = computeSchedulerRef.current;
-        if (!scheduler) {
-          return;
-        }
-        scheduler.schedule({
-          id: crypto.randomUUID(),
-          documentId: latest.activeDocumentId,
-          kind: "prewarm",
-          source: latest.source,
-          activeFigureId: latest.activeFigureId,
-          changedSourceIds: [hoveredElementId],
-          trigger: "drag-element"
-        });
-      }, 120);
-    };
-
-    scheduleFromState(useEditorStore.getState());
-    const unsubscribe = useEditorStore.subscribe(scheduleFromState);
-    return () => {
-      clearPrewarmTimer();
-      unsubscribe();
-    };
-  }, []);
 
   useEffect(() => {
     if (!platform.assistant?.bindEvents) {

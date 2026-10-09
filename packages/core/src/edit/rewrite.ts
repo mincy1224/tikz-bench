@@ -20,10 +20,11 @@ import { formatCoordinate, formatPolarCoordinate } from "./style.js";
 export function rewriteCoordinate(
   newWorld: WorldPoint,
   handle: EditHandle,
-  source: string
+  source: string,
+  precision?: NumberFormatOptions
 ): string | null {
   if (handle.rewriteMode === "positioning") {
-    return rewritePositioning(newWorld, handle);
+    return rewritePositioning(newWorld, handle, precision);
   }
 
   if (handle.rewriteMode === "unsupported") {
@@ -31,14 +32,14 @@ export function rewriteCoordinate(
   }
 
   if (handle.rewriteMode === "delta") {
-    return rewriteDelta(newWorld, handle, source);
+    return rewriteDelta(newWorld, handle, source, precision);
   }
 
   switch (handle.coordinateForm) {
     case "cartesian":
-      return rewriteCartesian(newWorld, handle, source);
+      return rewriteCartesian(newWorld, handle, source, precision);
     case "polar":
-      return rewritePolar(newWorld, handle, source);
+      return rewritePolar(newWorld, handle, source, precision);
     case "xyz":
     case "calc":
     case "explicit":
@@ -87,7 +88,8 @@ function rewriteUnsupportedCoordinate(
 function rewriteCartesian(
   newWorld: WorldPoint,
   handle: EditHandle,
-  source: string
+  source: string,
+  precision?: NumberFormatOptions
 ): string | null {
   if (!isFrameLocalCoordinateEditHandle(handle)) {
     return null;
@@ -98,14 +100,15 @@ function rewriteCartesian(
   }
   const cm = localToSourceUnits(local);
   const oldRaw = source.slice(handle.sourceRef.sourceSpan.from, handle.sourceRef.sourceSpan.to);
-  const coordinate = formatCoordinate(oldRaw, formatNumber(cm.x), formatNumber(cm.y));
-  return applyInsertionSyntax(source, handle, coordinate);
+  const coordinate = formatCoordinate(oldRaw, formatNumber(cm.x, precision), formatNumber(cm.y, precision));
+  return applyInsertionSyntax(source, handle, /^\s*at\s*=/u.test(oldRaw) ? `at=${coordinate}` : coordinate);
 }
 
 function rewritePolar(
   newWorld: WorldPoint,
   handle: EditHandle,
-  source: string
+  source: string,
+  precision?: NumberFormatOptions
 ): string | null {
   if (!isFrameLocalCoordinateEditHandle(handle)) {
     return null;
@@ -117,14 +120,15 @@ function rewritePolar(
   const cm = localToSourceUnits(local);
   const { angleDeg, radius } = toPolar(cm);
   const oldRaw = source.slice(handle.sourceRef.sourceSpan.from, handle.sourceRef.sourceSpan.to);
-  const coordinate = formatPolarCoordinate(oldRaw, formatNumber(angleDeg), formatNumber(radius));
+  const coordinate = formatPolarCoordinate(oldRaw, formatNumber(angleDeg, precision), formatNumber(radius, precision));
   return applyInsertionSyntax(source, handle, coordinate);
 }
 
 function rewriteDelta(
   newWorld: WorldPoint,
   handle: EditHandle,
-  source: string
+  source: string,
+  precision?: NumberFormatOptions
 ): string | null {
   if (!isRelativeCoordinateEditHandle(handle)) {
     return null;
@@ -142,13 +146,13 @@ function rewriteDelta(
   const oldRaw = source.slice(handle.sourceRef.sourceSpan.from, handle.sourceRef.sourceSpan.to);
   if (handle.coordinateForm === "polar") {
     const { angleDeg, radius } = toPolar(cm);
-    const coordinate = formatPolarCoordinate(oldRaw, formatNumber(angleDeg), formatNumber(radius));
+    const coordinate = formatPolarCoordinate(oldRaw, formatNumber(angleDeg, precision), formatNumber(radius, precision));
     return applyInsertionSyntax(source, handle, coordinate);
   }
   if (handle.coordinateForm === "xyz") {
     return null;
   }
-  const coordinate = formatCoordinate(oldRaw, formatNumber(cm.x), formatNumber(cm.y));
+  const coordinate = formatCoordinate(oldRaw, formatNumber(cm.x, precision), formatNumber(cm.y, precision));
   return applyInsertionSyntax(source, handle, coordinate);
 }
 
@@ -289,12 +293,13 @@ function signedPairForDirection(
 
 function rewritePositioning(
   newWorld: WorldPoint,
-  handle: EditHandle
+  handle: EditHandle,
+  precision?: NumberFormatOptions
 ): string | null {
   if (handle.handleType !== "node-positioning") {
     return null;
   }
-  return rewritePositioningFromContext(newWorld, handle.positioningContext);
+  return rewritePositioningFromContext(newWorld, handle.positioningContext, precision);
 }
 
 export function rewritePositioningFromContext(
@@ -302,7 +307,10 @@ export function rewritePositioningFromContext(
   ctx: EditHandlePositioningContext,
   formatOptions?: NumberFormatOptions
 ): string | null {
+  const snapRatio = formatOptions?.fractionDigits === 6 ? 0 : CARDINAL_SNAP_RATIO;
   const centerDeltaWorld = wp(newWorld.x - ctx.targetCenter.x, newWorld.y - ctx.targetCenter.y);
+  // Positioning dimensions are world lengths in PGF; unlike unitless vectors
+  // they are not rotated or scaled by the parent coordinate transform.
   const c2cXcm = centerDeltaWorld.x * CM_PER_PT;
   const c2cYcm = centerDeltaWorld.y * CM_PER_PT;
   const absCx = Math.abs(c2cXcm);
@@ -327,8 +335,8 @@ export function rewritePositioningFromContext(
       x: (absCx < 1e-6 ? currentSigns.x : Math.sign(c2cXcm)) as -1 | 0 | 1,
       y: (absCy < 1e-6 ? currentSigns.y : Math.sign(c2cYcm)) as -1 | 0 | 1
     };
-    const horizontalDominant = absCy <= Math.max(absCx * CARDINAL_SNAP_RATIO, 1e-6);
-    const verticalDominant = absCx <= Math.max(absCy * CARDINAL_SNAP_RATIO, 1e-6);
+    const horizontalDominant = absCy <= Math.max(absCx * snapRatio, 1e-6);
+    const verticalDominant = absCx <= Math.max(absCy * snapRatio, 1e-6);
     const candidateDirections: string[] = [];
 
     if (horizontalDominant) {
@@ -368,7 +376,7 @@ export function rewritePositioningFromContext(
       if (expected.x === 0 || expected.y === 0) {
         const axial = Math.max(absShiftXcm, absShiftYcm);
         const orthogonal = expected.x === 0 ? absShiftXcm : absShiftYcm;
-        const maxOrthogonal = Math.max(axial * CARDINAL_SNAP_RATIO, 1e-6);
+        const maxOrthogonal = Math.max(axial * snapRatio, 1e-6);
         if (orthogonal > maxOrthogonal) {
           continue;
         }

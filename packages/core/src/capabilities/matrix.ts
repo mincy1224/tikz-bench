@@ -396,7 +396,8 @@ export const capabilityMatrix: CapabilityMatrix = {
     semantic: "stable",
     svg: "stable",
     edit: "partial",
-    fixtures: ["matrix_basic"]
+    fixtures: ["matrix_basic"],
+    notes: "Whole-matrix placement, relative anchors, cell editing and structural actions; layout resize preserves text/stroke sizes, content scaling is separate. Cells cannot be dragged out of their layout."
   },
   fit_node: {
     parser: "stable",

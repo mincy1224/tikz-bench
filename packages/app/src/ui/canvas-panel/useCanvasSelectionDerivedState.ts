@@ -20,6 +20,7 @@ import {
 } from "./geometry";
 import { boundsFromPoints } from "./interaction-helpers";
 import { computeDragCapability } from "./drag-capability";
+import { createOperationCapabilities } from "tikz-editor/edit/operation-capabilities";
 import { followingAnchorHandleIds } from "tikz-editor/edit/anchored-selection";
 import { deriveCurveControlLines } from "./curve-controls";
 import { buildHitRegions, type HitRegion } from "./hit-regions";
@@ -269,6 +270,8 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
     return ids;
   }, [scopeOverlay.scopesById, snapshot.parseResult, snapshot.source]);
 
+  const operationCapabilities = useMemo(() => snapshot.semanticResult ? createOperationCapabilities(snapshot.parseResult?.figure.body ?? [], snapshot.semanticResult) : null, [snapshot.parseResult, snapshot.semanticResult]);
+
   const draggableSourceIds = useMemo(() => {
     const ids = new Set<string>(dragCapability.draggableSourceIds);
     const following = followingAnchorHandleIds(snapshot.parseResult?.figure.body ?? [], snapshot.editHandles, selectedElementIds);
@@ -291,7 +294,9 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       ids.delete(treeChildId);
     }
     for (const sourceId of matrixSourceIds) {
-      ids.add(sourceId);
+      const placementHandles = bySource.get(sourceId) ?? [];
+      if (operationCapabilities?.move(sourceId, following).available && placementHandles.some((handle) => handle.kind === "node-position")) ids.add(sourceId);
+      else ids.delete(sourceId);
     }
     for (const sourceId of treeRootSourceIds) {
       ids.add(sourceId);
@@ -306,7 +311,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       ids.add(nodeId);
     }
     return ids;
-  }, [adornmentTargetIds, dragCapability.draggableSourceIds, dragCapability.draggableHandleIds, fitNodeSourceIds, matrixCellSourceIds, matrixSourceIds, movableScopeSourceIds, pathAttachedNodeSourceIds, treeChildSourceIds, treeRootSourceIds, snapshot.parseResult, snapshot.editHandles, selectedElementIds]);
+  }, [adornmentTargetIds, dragCapability.draggableSourceIds, dragCapability.draggableHandleIds, fitNodeSourceIds, matrixCellSourceIds, matrixSourceIds, movableScopeSourceIds, pathAttachedNodeSourceIds, treeChildSourceIds, treeRootSourceIds, snapshot.parseResult, snapshot.editHandles, selectedElementIds, operationCapabilities]);
 
   const selectionBounds = useMemo<SelectionBounds[]>(() => {
     const selected: SelectionBounds[] = [];
@@ -427,11 +432,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
         sourceIds.add(sourceId);
       }
     }
-    for (const sourceId of selectedElementIds) {
-      if (matrixCellSourceIds.has(sourceId)) {
-        sourceIds.add(sourceId);
-      }
-    }
+
     for (const sourceId of selectedElementIds) {
       if (treeChildSourceIds.has(sourceId)) {
         sourceIds.add(sourceId);
@@ -441,7 +442,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       sourceIds.add(sourceId);
     }
     return sourceIds;
-  }, [matrixCellSourceIds, matrixSourceIds, nodeResizeSourceIds, resizablePathShapeSourceIds, scopeResizeSourceIds, selectedElementIds, treeChildSourceIds]);
+  }, [matrixSourceIds, nodeResizeSourceIds, resizablePathShapeSourceIds, scopeResizeSourceIds, selectedElementIds, treeChildSourceIds]);
 
   const matrixSelectionSourceIds = useMemo(() => {
     const ids = new Set<string>();
@@ -494,6 +495,11 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
         frames.set(sourceId, frame);
         continue;
       }
+      if (matrixSourceIds.has(sourceId)) {
+        const matrixBounds = selectionBoundsBySource.get(sourceId);
+        frames.set(sourceId, matrixBounds ? resolveResizeFrameFromBounds(sourceId, matrixBounds, svgResult.viewBox) : null);
+        continue;
+      }
       const path = snapshot.scene.elements.find((element): element is ScenePath => element.sourceRef.sourceId === sourceId && element.kind === "Path");
       const pathShapeHint = path ? resolveScenePathShapeHint(path, statements, sourceId) : undefined;
       const frame = resolveResizeFrameForSource(
@@ -506,7 +512,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       frames.set(sourceId, frame);
     }
     return frames;
-  }, [resizeFrameSourceIds, scopeOverlay.boundsByScopeId, scopeResizeSourceIds, snapshot.editHandles, snapshot.parseResult, snapshot.scene, svgResult]);
+  }, [matrixSourceIds, selectionBoundsBySource, resizeFrameSourceIds, scopeOverlay.boundsByScopeId, scopeResizeSourceIds, snapshot.editHandles, snapshot.parseResult, snapshot.scene, svgResult]);
 
   const selectionBoxes = useMemo<SelectionBoxDisplay[]>(() => {
     const textOnlyNodeSelectionSourceIds = new Set<string>();
@@ -686,9 +692,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       toolMode === "select" &&
       singleSelectedSourceId &&
       resizeHandleSourceIds.has(singleSelectedSourceId) &&
-      !fitNodeSourceIds.has(singleSelectedSourceId) &&
-      !matrixSourceIds.has(singleSelectedSourceId) &&
-      !matrixCellSourceIds.has(singleSelectedSourceId) &&
+      operationCapabilities?.rotate(singleSelectedSourceId).available &&
       !scopeResizeSourceIds.has(singleSelectedSourceId)
         ? singleSelectedSourceId
         : null;
@@ -745,10 +749,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       const resizeFrame = resizeFramesBySource.get(sourceId) ?? null;
       if (resizeFrame) {
         const resizeDisabled =
-          fitNodeSourceIds.has(sourceId)
-          || treeChildSourceIds.has(sourceId)
-          || matrixSourceIds.has(sourceId)
-          || matrixCellSourceIds.has(sourceId);
+          treeChildSourceIds.has(sourceId) || operationCapabilities?.resize(sourceId).available === false;
         displays.push(
           ...buildResizeHandleDisplaysForFrame({
             sourceId,
@@ -788,10 +789,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
       }
 
       const resizeDisabled =
-        fitNodeSourceIds.has(sourceId)
-        || treeChildSourceIds.has(sourceId)
-        || matrixSourceIds.has(sourceId)
-        || matrixCellSourceIds.has(sourceId);
+        treeChildSourceIds.has(sourceId) || operationCapabilities?.resize(sourceId).available === false;
       displays.push(
         ...buildResizeHandleDisplaysForBounds({
           sourceId,
@@ -829,7 +827,7 @@ export function useCanvasSelectionDerivedState(args: UseCanvasSelectionDerivedSt
     }
 
     return displays;
-  }, [ROTATE_HANDLE_OFFSET_PX, canvasTransform.scale, collapsedDensePathEndpointsBySource, collapsedDensePathSourceIds, dragCapability.draggableHandleIds, draggableSourceIds, fitNodeSourceIds, matrixCellSourceIds, matrixSourceIds, resizablePathShapeSourceIds, resizeFrameSourceIds, resizeFramesBySource, scopeResizeSourceIds, selectedElementIds, selectedHandles, selectionBoundsBySource, snapshot.editHandles, snapshot.parseResult, snapshot.scene, snapshot.source, svgResult, toolMode, treeChildSourceIds]);
+  }, [operationCapabilities, ROTATE_HANDLE_OFFSET_PX, canvasTransform.scale, collapsedDensePathEndpointsBySource, collapsedDensePathSourceIds, dragCapability.draggableHandleIds, draggableSourceIds, resizablePathShapeSourceIds, resizeFrameSourceIds, resizeFramesBySource, scopeResizeSourceIds, selectedElementIds, selectedHandles, selectionBoundsBySource, snapshot.editHandles, snapshot.parseResult, snapshot.scene, snapshot.source, svgResult, toolMode, treeChildSourceIds]);
 
   const hitRegions = useMemo(() => {
     if (!snapshot.scene || !svgResult) return [];

@@ -209,6 +209,9 @@
   display: block;
   width: 100%;
   height: 100%;
+  /* Structured edits keep the canvas origin stable; moved objects may extend
+     past the original SVG bounds. The viewport remains the clipping boundary. */
+  overflow: visible;
 }
 
 .interactionLayer {

@@ -736,42 +736,30 @@ function shiftSpan(span: Span, delta: number): Span {
   };
 }
 
+/** All old spans refer to the same baseline and all new spans to the final
+ * source. Never compare a partially shifted offset against another old span. */
 function shiftSpanThroughPatches(span: Span, patches: readonly SourcePatch[]): Span {
-  let next = { ...span };
-  for (const patch of patches) {
-    next = shiftSpanThroughSinglePatch(next, patch);
-  }
-  return next;
-}
-
-function shiftSpanThroughSinglePatch(span: Span, patch: SourcePatch): Span {
-  const oldSpan = patch.oldSpan;
-  const newSpan = patch.newSpan;
-  const delta = width(newSpan) - width(oldSpan);
-  if (span.to <= oldSpan.from) {
-    return span;
-  }
-  if (span.from >= oldSpan.to) {
-    return {
-      from: span.from + delta,
-      to: span.to + delta
-    };
-  }
-  if (span.from >= oldSpan.from && span.to <= oldSpan.to) {
-    if (span.from === oldSpan.from && span.to === oldSpan.to) {
-      return { ...newSpan };
+  const mapOffset = (offset: number, edge: "start" | "end"): number => {
+    let delta = 0;
+    for (const patch of patches) {
+      const { oldSpan, newSpan } = patch;
+      if (offset < oldSpan.from) break;
+      if (oldSpan.from === oldSpan.to && offset === oldSpan.from) {
+        return edge === "start" ? newSpan.to : newSpan.from;
+      }
+      if (offset <= oldSpan.to) {
+        return offset === oldSpan.to ? newSpan.to : newSpan.from + Math.min(offset - oldSpan.from, width(newSpan));
+      }
+      delta += width(newSpan) - width(oldSpan);
     }
-    const relativeFrom = span.from - oldSpan.from;
-    const relativeTo = span.to - oldSpan.from;
-    return {
-      from: newSpan.from + Math.min(relativeFrom, width(newSpan)),
-      to: newSpan.from + Math.min(relativeTo, width(newSpan))
-    };
-  }
-  return {
-    from: span.from,
-    to: span.to + delta
+    return offset + delta;
   };
+  // A whole statement replacement can grow at its end. Its boundary maps to
+  // the final replacement boundary rather than to the old relative length.
+  const replacement = patches.find((patch) => span.from === patch.oldSpan.from && span.to === patch.oldSpan.to);
+  if (replacement) return { ...replacement.newSpan };
+  const from = mapOffset(span.from, "start"), to = mapOffset(span.to, "end");
+  return { from, to: Math.max(from, to) };
 }
 
 function width(span: Span): number {

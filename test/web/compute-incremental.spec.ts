@@ -164,9 +164,8 @@ describe("computeSnapshot incremental parser integration", () => {
       role: "right",
       newWorld: wp(90, 0)
     });
-    expect(action.kind === "success" || action.kind === "partial").toBe(true);
     if (!(action.kind === "success" || action.kind === "partial")) {
-      throw new Error(`resizeElement failed: ${action.kind}`);
+      throw new Error(`resizeElement failed: ${action.kind} ${action.kind === "error" ? action.message : action.reason}`);
     }
 
     const incremental = await computeSnapshot({
@@ -456,9 +455,8 @@ describe("computeSnapshot incremental parser integration", () => {
       role: "top-left",
       newWorld: wp(-10, 10)
     });
-    expect(action.kind === "success" || action.kind === "partial").toBe(true);
     if (!(action.kind === "success" || action.kind === "partial")) {
-      throw new Error(`resizeElement failed: ${action.kind}`);
+      throw new Error(`resizeElement failed: ${action.kind} ${action.kind === "error" ? action.message : action.reason}`);
     }
 
     const incremental = await computeSnapshot({
@@ -507,9 +505,8 @@ describe("computeSnapshot incremental parser integration", () => {
       role: "top-left",
       newWorld: wp(-12, 10)
     });
-    expect(action.kind === "success" || action.kind === "partial").toBe(true);
     if (!(action.kind === "success" || action.kind === "partial")) {
-      throw new Error(`resizeElement failed: ${action.kind}`);
+      throw new Error(`resizeElement failed: ${action.kind} ${action.kind === "error" ? action.message : action.reason}`);
     }
 
     const incremental = await computeSnapshot({

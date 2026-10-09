@@ -1,3 +1,4 @@
+import { useMatrixEditing } from "./matrix-editing";
 import {
 Suspense,
 lazy,
@@ -25,7 +26,7 @@ preflightPositionNodeRelativeToAction,
 type EditAction,
 type EditActionResult
 } from "tikz-editor/edit/actions";
-import { PT_PER_CM,formatNumber } from "tikz-editor/edit/format";
+import { formatNumber } from "tikz-editor/edit/format";
 import {
 makeForeachTemplateTargetId,
 resolvePropertyTargetFromParseResult
@@ -211,8 +212,8 @@ type SnapDebugOverlayDragState =
 const RULER_SIZE = 24;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 20;
-const NUDGE_STEP_PT = 0.05 * PT_PER_CM;
-const NUDGE_STEP_SHIFT_PT = 0.25 * PT_PER_CM;
+const NUDGE_STEP_PT = 1;
+const NUDGE_STEP_SHIFT_PT = 10;
 const ROTATE_HANDLE_OFFSET_PX = 24;
 const LEFT_RULER_DRAG_SOURCE_WIDTH_PX = 12;
 const RESIZE_NOOP_REASON = "Resize would not change node constraints.";
@@ -2180,6 +2181,8 @@ export const CanvasPanel = memo(function CanvasPanel({
 
   
 
+  const onElementHoverChange = useCallback((id: string | null) => { dispatch({ type: "SET_HOVERED_ELEMENT", id }); }, [dispatch]);
+
   const resolveEditableTextTarget = useCallback(
     (targetId: string, region: HitRegion | undefined): EditableTextTarget | null => {
       if (region?.shape !== "rect" || region.interactionMode === "move") {
@@ -2662,6 +2665,8 @@ export const CanvasPanel = memo(function CanvasPanel({
       event.stopPropagation();
       textSelectionDragRef.current = null;
       dispatchCanvasTextEditAction({ type: "session_close" });
+      const matrix = useMatrixEditing.getState();
+      if (matrix.matrixId) { dispatch({ type: "SELECT", id: matrix.matrixId, additive: false }); matrix.leave(); viewportRef.current?.focus({ preventScroll: true }); }
       return;
     }
 
@@ -2695,7 +2700,7 @@ export const CanvasPanel = memo(function CanvasPanel({
       return;
     }
     pendingTextEditInsertTextRef.current = event.key.length === 1 ? event.key : null;
-  }, [dispatchCanvasTextEditAction]);
+  }, [dispatchCanvasTextEditAction, dispatch]);
 
   const handleTextEditPopupPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -3916,7 +3921,7 @@ export const CanvasPanel = memo(function CanvasPanel({
         onElementPointerDown={onElementPointerDown}
         onElementContextMenu={onElementContextMenu}
         onElementDoubleClick={onElementDoubleClick}
-        onHoverChange={(id: string | null) => { dispatch({ type: "SET_HOVERED_ELEMENT", id }); }}
+        onHoverChange={onElementHoverChange}
         nodePositionLinks={nodePositionLinks}
         marqueeBounds={marqueeBounds}
         selectionBoxes={selectionBoxes}

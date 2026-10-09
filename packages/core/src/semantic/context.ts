@@ -182,6 +182,7 @@ export type SemanticContextFrame = {
 };
 
 export type SemanticContext = {
+  statementParentFrames: PersistentMap<string, WorldTransform>;
   stack: SemanticContextFrame[];
   source: string;
   sourceFingerprint: string;
@@ -236,6 +237,7 @@ export type SemanticStatementSuffixSkipKind =
   | "unsafe";
 
 export type SemanticStatementEffectSummary = {
+  placementFrames?: Array<{ sourceId: string; frame: WorldTransform }>;
   producesNamedCoordinates: Array<{ key: string; point: WorldPoint }>;
   producesNamedNodeGeometries: Array<{ key: string; geometry: NamedNodeGeometry }>;
   producesNamedPaths: string[];
@@ -251,6 +253,7 @@ export type SemanticStatementEffectSummary = {
 };
 
 export type SemanticContextSnapshot = {
+  statementParentFramesState: PersistentMapSnapshot<string, WorldTransform>;
   stack: SemanticContextFrame[];
   layers: SceneLayer[];
   backgroundState: SemanticBackgroundState;
@@ -279,6 +282,7 @@ export type RestoreSemanticContextOptions = {
 };
 
 type SemanticStatementEffectTracker = {
+  placementFrames: Map<string, WorldTransform>;
   producedNamedCoordinates: Map<string, WorldPoint>;
   producedNamedNodeGeometries: Map<string, NamedNodeGeometry>;
   producedNamedPaths: Set<string>;
@@ -382,6 +386,7 @@ export function createSemanticContext(
       }
     ],
     source,
+    statementParentFrames: new PersistentMap<string, WorldTransform>(),
     sourceFingerprint,
     layers: createDefaultSceneLayerMap(),
     backgroundState: defaultBackgroundState,
@@ -463,6 +468,7 @@ export function snapshotSemanticContext(
     backgroundState: structuredClone(context.backgroundState),
     pictureBounds: context.pictureBounds ? { ...context.pictureBounds } : null,
     namedCoordinatesState: context.namedCoordinates.snapshot(),
+    statementParentFramesState: context.statementParentFrames.snapshot(),
     namedNodeSetsState: context.namedNodeSets.snapshot(),
     namedCoordinateRewriteHandlesState: context.namedCoordinateRewriteHandles.snapshot(),
     namedNodeGeometriesState: context.namedNodeGeometries.snapshot(),
@@ -489,6 +495,7 @@ export function restoreSemanticContext(
   context.backgroundState = structuredClone(snapshot.backgroundState);
   context.pictureBounds = snapshot.pictureBounds ? { ...snapshot.pictureBounds } : null;
   context.namedCoordinates.restore(snapshot.namedCoordinatesState);
+  context.statementParentFrames.restore(snapshot.statementParentFramesState);
   context.namedNodeSets.restore(snapshot.namedNodeSetsState);
   context.namedCoordinateRewriteHandles.restore(snapshot.namedCoordinateRewriteHandlesState);
   context.namedNodeGeometries.restore(snapshot.namedNodeGeometriesState);
@@ -839,6 +846,7 @@ export function readNamedPath(
 
 export function beginStatementEffectTracking(context: SemanticContext): void {
   context.statementEffectTracker = {
+    placementFrames: new Map(),
     producedNamedCoordinates: new Map<string, WorldPoint>(),
     producedNamedNodeGeometries: new Map<string, NamedNodeGeometry>(),
     producedNamedPaths: new Set<string>(),
@@ -874,6 +882,7 @@ export function endStatementEffectTracking(
     };
   }
   return {
+    placementFrames: [...tracker.placementFrames].map(([sourceId, frame]) => ({ sourceId, frame: { ...frame } })),
     producesNamedCoordinates: [...tracker.producedNamedCoordinates.entries()].map(([key, point]) => ({
       key,
       point: { ...point }
@@ -904,6 +913,7 @@ export function applyStatementEffectSummary(
   summary: SemanticStatementEffectSummary,
   options: { sourceId?: string } = {}
 ): void {
+  for (const entry of summary.placementFrames ?? []) context.statementParentFrames.set(entry.sourceId, { ...entry.frame });
   const sourceId = options.sourceId;
   if (sourceId) {
     context.dependencyBuilder.ensureSourceNode(sourceId);

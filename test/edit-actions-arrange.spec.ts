@@ -114,7 +114,7 @@ describe("applyEditAction – alignElements", () => {
     });
     expect(result.kind).toBe("unsupported");
     if (result.kind === "unsupported") {
-      expect(result.reason).toContain("unsupported coordinate forms");
+      expect(result.reason).toContain("cannot be arranged safely");
     }
   });
 });
@@ -206,7 +206,7 @@ describe("applyEditAction – distributeElements", () => {
     });
     expect(result.kind).toBe("unsupported");
     if (result.kind === "unsupported") {
-      expect(result.reason).toContain("unsupported coordinate forms");
+      expect(result.reason).toContain("cannot be arranged safely");
     }
   });
 });

@@ -950,6 +950,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       break;
     }
 
+    case "RESTORE_EDIT_PREVIEW_SNAPSHOT": {
+      workspace = updateDocument(workspace, action.documentId, (doc) => doc.source === action.snapshot.source ? { ...doc, snapshot: action.snapshot, pendingRequestId: null } : doc);
+      break;
+    }
     case "COMMIT_PROPERTY_SOURCE": {
       const documentId = activeDocumentIdFromAction(state, action.documentId);
       const doc = readDocument(workspace.documents, documentId);
@@ -962,7 +966,11 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       workspace = updateDocument(workspace, documentId, (current) => ({ ...current,
         source: action.source,
         propertyPreviewBaseSource: undefined, sourceRevision: current.sourceRevision + 1,
-        lastEditChangedSourceIds: null, lastEditPatches: null, lastEditPatchBaseRevision: null,
+        // Finishing a preview does not change its source. Retain its geometry
+        // patches so the release render can reuse the incremental pipeline.
+        lastEditChangedSourceIds: current.source === action.source ? current.lastEditChangedSourceIds : null,
+        lastEditPatches: current.source === action.source ? current.lastEditPatches : null,
+        lastEditPatchBaseRevision: current.source === action.source ? current.lastEditPatchBaseRevision : null,
         lastEditChangeToken: current.lastEditChangeToken + 1, history, historyIndex: history.length - 1,
         dirty: action.source !== current.savedSource
       }));
@@ -984,8 +992,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           sourceRevision: doc.sourceRevision + 1,
           lastEditChangedSourceIds: action.changedSourceIds ?? null,
           lastEditChangeToken: doc.lastEditChangeToken + 1,
-          lastEditPatches: null,
-          lastEditPatchBaseRevision: null,
+          lastEditPatches: action.patches ?? (action.changedSourceIds?.length ? deriveSingleSourcePatch(doc.source, action.source) : null),
+          lastEditPatchBaseRevision: action.patches ? action.patchBaseRevision ?? doc.sourceRevision : action.changedSourceIds?.length ? doc.sourceRevision : null,
           lastEditWarningMessage: null,
           lastEditWarningToken:
             doc.lastEditWarningMessage != null

@@ -1,12 +1,12 @@
 import { parseNodePartSource, resolveRectangleSplitParts } from "../semantic/nodes/multipart.js";
 import { resolvePropertyTarget } from "./property-target.js";
 import { applyOptionMutationsToTarget, type OptionMutation } from "./option-mutations.js";
-import { parseTikzForEdit } from "./parse-options.js";
+import { parseTikzForEdit, type EditParseOptions } from "./parse-options.js";
 import type { Statement, NodeItem } from "../ast/types.js";
 import { advancedObject, advancedEffectiveOptions, setAdvancedOption } from "./advanced-objects.js";
 import { parseOptionListRaw } from "../options/parse.js";
 
-export function getEditableNodeParts(source: string, elementId: string) {
+export function getEditableNodeParts(source: string, elementId: string, options: EditParseOptions = {}) {
   if (elementId.startsWith("advanced:")) {
     const object = advancedObject(source, elementId);
     if (object.family !== "forest" || !object.content) return null;
@@ -25,9 +25,9 @@ export function getEditableNodeParts(source: string, elementId: string) {
     }
     return undefined;
   };
-  const node = findNode(parseTikzForEdit(source).figure.body);
+  const node = findNode(parseTikzForEdit(source, options).figure.body);
   if (!node) return null;
-  const result = resolvePropertyTarget(source, node.id);
+  const result = resolvePropertyTarget(source, node.id, options);
   if (result.kind !== "found") return null;
   const target = { ...result.target, textSpan: node.textSpan };
   const shape = target.options?.entries.some((entry) => entry.kind !== "unknown" && (entry.key === "rectangle split" || (entry.kind === "kv" && entry.key === "shape" && entry.valueRaw.trim() === "rectangle split")));
@@ -36,8 +36,8 @@ export function getEditableNodeParts(source: string, elementId: string) {
   return { target, count: resolveRectangleSplitParts(target.options), parts: parseNodePartSource(source.slice(span.from, span.to), span.from) };
 }
 
-export function updateNodePart(source: string, elementId: string, index: number, property: "text" | "font" | "align", value: string): string {
-  const model = getEditableNodeParts(source, elementId);
+export function updateNodePart(source: string, elementId: string, index: number, property: "text" | "font" | "align", value: string, options: EditParseOptions = {}): string {
+  const model = getEditableNodeParts(source, elementId, options);
   if (!model) throw new Error("Multipart source target is unavailable");
   const part = model.parts.slice().reverse().find((candidate) => candidate.logicalIndex === index);
   if (!part?.contentSpan) {
@@ -61,8 +61,8 @@ export function updateNodePart(source: string, elementId: string, index: number,
   return result?.source ?? source;
 }
 
-export function updateNodePartFill(source: string, elementId: string, index: number, value: string): string {
-  const model = getEditableNodeParts(source, elementId);
+export function updateNodePartFill(source: string, elementId: string, index: number, value: string, options: EditParseOptions = {}): string {
+  const model = getEditableNodeParts(source, elementId, options);
   if (!model) throw new Error("Multipart source target is unavailable");
   const entry = model.target.options?.entries.slice().reverse().find((candidate) => candidate.kind === "kv" && candidate.key === "rectangle split part fill");
   const fills = entry?.kind === "kv" ? entry.valueRaw.replace(/^\{|\}$/gu, "").split(",").map((color) => color.trim()) : [];
@@ -82,8 +82,8 @@ export function updateNodePartFill(source: string, elementId: string, index: num
 }
 
 /** Values shown in the format panel come from the same source model as writes. */
-export function nodePartProperty(source: string, elementId: string, index: number, property: "fill" | "font" | "align"): string {
-  const model = getEditableNodeParts(source, elementId);
+export function nodePartProperty(source: string, elementId: string, index: number, property: "fill" | "font" | "align", options: EditParseOptions = {}): string {
+  const model = getEditableNodeParts(source, elementId, options);
   if (!model) return "";
   const read = (entries: typeof model.target.options, key: string): string => {
     const entry = entries?.entries.slice().reverse().find((candidate) => candidate.kind === "kv" && candidate.key === key);

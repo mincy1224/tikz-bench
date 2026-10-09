@@ -934,10 +934,9 @@ export function evaluatePathStatement(
           optionsSpan: adornmentPlan.mainOptions?.span
         };
         const standaloneNodeDefaultTarget = !hasPathCurrentPoint ? defaultPathOrigin : undefined;
-        const allowImplicitOriginHandle =
-          statement.command === "node"
-          && !hasPathCurrentPoint
-          && !isMatrixNodeOptions(nodeItem.options);
+          const allowImplicitOriginHandle =
+            (statement.command === "node" || statement.items.some((candidate) => candidate.kind === "ChildOperation"))
+            && !hasPathCurrentPoint;
         const scopedAutoSide = resolveScopedAutoSide(statementStyleChain);
         const nodeOptionsWithScopedAuto =
           scopedAutoSide != null
@@ -2874,18 +2873,6 @@ function mergeOptionLists(left: OptionListAst | undefined, right: OptionListAst 
     raw: `${left.raw}, ${right.raw}`,
     entries: [...left.entries, ...right.entries]
   };
-}
-
-function isMatrixNodeOptions(options: NodeItem["options"] | undefined): boolean {
-  for (const entry of options?.entries ?? []) {
-    if (entry.kind !== "flag" && entry.kind !== "kv") {
-      continue;
-    }
-    if (entry.key === "matrix" || entry.key === "matrix of nodes" || entry.key === "matrix of math nodes") {
-      return true;
-    }
-  }
-  return false;
 }
 
 function expandPathItemRaw(raw: string, context: SemanticContext): string {

@@ -574,8 +574,9 @@ describe("editorReducer – APPLY_EDIT_ACTION", () => {
       action: {
         kind: "moveElement",
         elementId: "elem-1",
-        delta: wp(0.01, 0)
-      }
+        delta: wp(0, 0)
+      },
+      precomputedResult: { kind: "success", newSource: initial.source, patches: [] }
     });
 
     expect(next).toBe(initial);

@@ -309,6 +309,7 @@ export type EditorState = {
 
 export type EditorAction =
   | { type: "COMMIT_PROPERTY_SOURCE"; source: string; expectedSource: string; documentId?: string; label?: string }
+  | { type: "RESTORE_EDIT_PREVIEW_SNAPSHOT"; snapshot: SessionSnapshot; documentId: string }
   // Document
   | { type: "LOAD_PROJECT"; source: string; title: string }
   | { type: "CODE_EDITED"; source: string }
@@ -356,6 +357,8 @@ export type EditorAction =
       documentId?: string;
       source: string;
       changedSourceIds?: string[] | null;
+      patches?: SourcePatch[];
+      patchBaseRevision?: number;
     }
   | { type: "COMPUTE_REQUESTED"; requestId: string; documentId?: string }
   | { type: "SNAPSHOT_READY"; requestId: string; snapshot: SessionSnapshot; documentId?: string }

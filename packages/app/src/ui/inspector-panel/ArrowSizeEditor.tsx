@@ -4,14 +4,16 @@ import { buildArrowTipSizeMutation, type ArrowSizeKey, type ArrowTipWriteTarget 
 import type { ArrowTipSide } from "tikz-editor/edit/inspector";
 import { parseLength } from "tikz-editor/semantic/coords/parse-length";
 import { usePropertyEditSession } from "./usePropertyEditSession";
+import { useEditorStore } from "../../store/store";
 import css from "./InspectorPanel.module.css";
 
 export function ArrowSizeEditor({ writes, side }: { writes: readonly ArrowTipWriteTarget[]; side: ArrowTipSide }) {
   const editable = writes.filter((write) => write.writable && (side === "start" ? write.arrowContext.startRaw : write.arrowContext.endRaw).trim());
   const key = `${side}:${writes.map((write) => write.elementId).join(",")}`;
-  const { update, cancel, commitPreview, error } = usePropertyEditSession(key);
+  const { update, cancel, commitPreview, error, reject } = usePropertyEditSession(key);
   const [drafts, setDrafts] = useState<Partial<Record<ArrowSizeKey, string>>>({});
   const skipBlur = useRef(false);
+  const composing = useRef(false);
   if (!editable.length) return null;
   const rawValue = (name: ArrowSizeKey): string => {
     const values = editable.map((write) => {
@@ -24,14 +26,14 @@ export function ArrowSizeEditor({ writes, side }: { writes: readonly ArrowTipWri
     let value = raw.trim();
     if (value) {
       const number = name === "scale" ? Number(value) : parseLength(value, "pt");
-      if (number == null || !Number.isFinite(number) || number <= 0) return;
+      if (number == null || !Number.isFinite(number) || number <= 0) { reject("请输入正数；长度和宽度支持 pt、mm、cm。"); return; }
       value = `${number}${name === "scale" ? "" : "pt"}`;
     }
     update((source) => {
       let next = source;
       for (const write of editable) {
         const mutation = buildArrowTipSizeMutation(write.arrowContext, side, name, value);
-        const result = applyEditAction(next, [], { kind: "setProperty", elementId: write.elementId, level: write.level, ...mutation });
+        const result = applyEditAction(next, [], { kind: "setProperty", elementId: write.elementId, level: write.level, ...mutation }, { parseOptions: { activeFigureId: useEditorStore.getState().activeFigureId } });
         if (result.kind !== "success" && result.kind !== "partial") throw new Error("Arrow source is no longer editable");
         next = result.newSource;
       }
@@ -53,17 +55,20 @@ export function ArrowSizeEditor({ writes, side }: { writes: readonly ArrowTipWri
       <span>{name === "scale" ? "倍率" : name === "length" ? "长度" : "宽度"}</span>
       <input aria-label={`${side}:${name}`} type="text" inputMode="decimal" placeholder={rawValue(name) === "多个值" ? "多个值" : "自动"}
         value={drafts[name] ?? (rawValue(name) === "多个值" ? "" : rawValue(name))}
+        onCompositionStart={() => { composing.current = true; }}
+        onCompositionEnd={() => { composing.current = false; }}
         onChange={(event) => { setDrafts({ ...drafts, [name]: event.target.value }); }}
         onBlur={(event) => { if (!skipBlur.current && drafts[name] !== undefined) change(name, event.target.value, false); skipBlur.current = false; setDrafts({}); }}
-        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { skipBlur.current = true; cancel(); setDrafts({}); event.currentTarget.blur(); } }} />
+        onKeyDown={(event) => { if (composing.current || event.nativeEvent.isComposing) return; if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") { skipBlur.current = true; cancel(); setDrafts({}); event.currentTarget.blur(); } }} />
       <small>{name === "scale" ? "×" : "pt / mm / cm"}</small>
     </label>)}</div>
     <button type="button" className={css.moreOptionsToggle} onClick={() => { update((source) => {
       let next = source;
       for (const write of editable) {
           const mutation = buildArrowTipSizeMutation(write.arrowContext, side, "reset", "");
-          const result = applyEditAction(next, [], { kind: "setProperty", elementId: write.elementId, level: write.level, ...mutation });
-          if (result.kind === "success" || result.kind === "partial") next = result.newSource;
+          const result = applyEditAction(next, [], { kind: "setProperty", elementId: write.elementId, level: write.level, ...mutation }, { parseOptions: { activeFigureId: useEditorStore.getState().activeFigureId } });
+          if (result.kind !== "success" && result.kind !== "partial") throw new Error("Arrow source is no longer editable");
+          next = result.newSource;
       }
       return next;
     }, false); setDrafts({}); }}>恢复箭头默认尺寸</button>
